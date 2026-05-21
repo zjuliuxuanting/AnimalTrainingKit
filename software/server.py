@@ -1,0 +1,692 @@
+"""
+行为学训练盒 — Web 服务器
+
+启动方式：
+  pip install fastapi uvicorn websockets
+  python server.py
+  浏览器打开 http://localhost:8001
+
+版本号：v1.1.0（2026-05-19 UX 修复后）
+端口：默认 8001（开发期）。正式交付前切回 8000。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import sys
+import signal
+import logging
+import subprocess
+import time
+from typing import Optional
+
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, PROJECT_ROOT)
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+import uvicorn
+
+from contextlib import asynccontextmanager
+
+from protocol.signal_source import MockSignalSource, TimerSource, SignalEvent
+from protocol.signal_bus import SignalBus
+from session.session import Session, ExperimentConfig
+from session.flow_model import FlowGraph
+from session.engine import Engine
+from session.validator import validate_flow
+from data.database import Database
+from data.event_store import EventStore
+from data.processor import DataProcessor
+from data.export import export_session_csv
+from data.experiment_manager import set_experiments_root, create_experiment, list_experiments, get_experiment, update_experiment, delete_experiment, clone_experiment, save_flow, load_flow
+
+APP_VERSION = "v1.1.0"
+DEFAULT_PORT = 8000
+
+db: Optional[Database] = None
+event_store: Optional[EventStore] = None
+bus: Optional[SignalBus] = None
+engine: Optional[Engine] = None
+session: Optional[Session] = None
+_loop: Optional[asyncio.AbstractEventLoop] = None
+ws_clients: set = set()
+_mutex = asyncio.Lock()
+_experiment_active = False
+_mock_device_mgr = None
+_camera_config_path = os.path.join(PROJECT_ROOT, "data", "camera_config.json")
+
+
+@asynccontextmanager
+async def lifespan(app_instance):
+    global db, event_store, _loop
+    _loop = asyncio.get_event_loop()
+    db_dir = os.path.join(PROJECT_ROOT, "data")
+    os.makedirs(db_dir, exist_ok=True)
+    db = Database(os.path.join(db_dir, "behavior_box.db"))
+    db.open()
+    event_store = EventStore(db)
+    set_experiments_root(os.path.join(PROJECT_ROOT, "data", "experiments"))
+    yield
+    if engine:
+        await engine.stop()
+    if bus:
+        await bus.stop_all()
+    if db:
+        db.close()
+
+
+app = FastAPI(title="行为学训练盒", lifespan=lifespan)
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(ws: WebSocket):
+    await ws.accept()
+    ws_clients.add(ws)
+    try:
+        while True:
+            data = await ws.receive_text()
+            msg = json.loads(data)
+            if msg.get("action") == "ping":
+                await ws.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        pass
+    finally:
+        ws_clients.discard(ws)
+
+
+async def broadcast(msg: dict):
+    dead = set()
+    for ws in list(ws_clients):
+        try:
+            await ws.send_json(msg)
+        except Exception:
+            dead.add(ws)
+    ws_clients.difference_update(dead)
+
+
+app.mount("/static", StaticFiles(directory=os.path.join(PROJECT_ROOT, "web")), name="static")
+
+
+@app.get("/")
+async def index():
+    return FileResponse(os.path.join(PROJECT_ROOT, "web", "index.html"))
+
+
+@app.get("/api/status")
+async def api_status():
+    return {
+        "status": "ok",
+        "version": APP_VERSION,
+        "engine": engine.state.value if engine else "idle",
+        "session": session.state.value if session else "none",
+        "ws_clients": len(ws_clients),
+    }
+
+
+@app.post("/api/experiment/start-mock")
+async def api_start_mock(count: int = 10, subject_id: str = "", exp_name: str = "", notes: str = "", max_duration_min: int = 0, experiment_id: str = ""):
+    global bus, engine, session, _experiment_active
+    if count < 1 and max_duration_min < 1:
+        raise HTTPException(400, "触发次数和运行时间至少有一个必须大于 0")
+    async with _mutex:
+        if _experiment_active:
+            raise HTTPException(400, "实验正在运行中，请先停止")
+
+        duration_s = max_duration_min * 60 if max_duration_min > 0 else (count * 1.8 if count > 0 else 30) + 5
+        s = Session()
+        safe_name = exp_name or f"手动触发-{count}次"
+        config = ExperimentConfig(
+            name=safe_name,
+            description=notes or "手动信号测试",
+            session_timeout_ms=int(max(duration_s, 30) * 2000),
+        )
+        s.load(config)
+        event_store.ensure_session(s.id, name=config.name, experiment_id=experiment_id, config_json=json.dumps({
+            "name": safe_name, "subject_id": subject_id, "notes": notes, "count": count,
+        }, ensure_ascii=False))
+
+        b = SignalBus()
+        b.register(MockSignalSource("mock:0", event_interval_ms=1500))
+        b.register(TimerSource("timer:0", tick_interval_ms=1000))
+
+        e = Engine()
+
+        def _on_signal(sig):
+            event_store.append_event(
+                session_id=s.id,
+                event_type="manual_trigger",
+                ts_ms=sig.ts_ms,
+                signal_id=f"{sig.source_id}:{sig.signal_id}",
+                raw_payload={"value": sig.value, "data": sig.data},
+            )
+            asyncio.run_coroutine_threadsafe(
+                broadcast({"type": "signal", "session_id": s.id, "signal_id": f"{sig.source_id}:{sig.signal_id}", "ts": sig.ts_ms, "value": str(sig.value)}),
+                _loop,
+            )
+
+        b.set_on_signal(_on_signal)
+
+        async def run():
+            global _experiment_active
+            try:
+                await b.start_all()
+                s.start()
+                start_ts = time.time()
+                deadline = start_ts + duration_s
+                max_events = count if count > 0 else float('inf')
+                while time.time() < deadline:
+                    await asyncio.sleep(0.1)
+                    # 先到先停：触发次数达到或运行时间到，谁先到就停谁
+                    event_count = len(event_store.get_events(s.id))
+                    if event_count >= max_events:
+                        logger.info(f"达到最大触发次数 {int(max_events)}，停止")
+                        break
+                    if time.time() >= deadline:
+                        break
+                await b.stop_all()
+                s.stop()
+                event_store.update_session_state(s.id, s.state.value)
+                raw_events = event_store.get_events(s.id)
+                processor = DataProcessor()
+                structured = processor.to_structured(processor.process(raw_events), session_id=s.id, subject_id=subject_id, session_name=safe_name)
+                csv_path = export_session_csv(structured, s.id, os.path.join(PROJECT_ROOT, "data"), subject_id=subject_id, session_name=safe_name)
+                await broadcast({"type": "mock_complete", "session_id": s.id, "event_count": len(raw_events), "csv_path": csv_path})
+            except Exception as exc:
+                logger.exception(f"实验运行异常: {exc}")
+            finally:
+                _experiment_active = False
+
+        _experiment_active = True
+        asyncio.create_task(run())
+        session = s
+        engine = e
+        bus = b
+    return {"status": "started", "session_id": s.id, "target": count}
+
+
+@app.post("/api/experiment/stop")
+async def api_stop():
+    global engine, bus, _experiment_active
+    _experiment_active = False
+    if engine:
+        async def _stop():
+            await engine.stop()
+            if bus:
+                await bus.stop_all()
+        asyncio.create_task(_stop())
+    return {"status": "stopping"}
+
+
+@app.get("/api/experiment/state")
+async def api_experiment_state():
+    return {
+        "engine": "running" if _experiment_active else "idle",
+        "session": session.state.value if session else "none",
+        "session_id": session.id if session else "",
+    }
+
+
+@app.get("/api/sessions")
+async def api_sessions():
+    return {"sessions": event_store.get_sessions(limit=50)}
+
+
+@app.get("/api/sessions/{session_id}/events")
+async def api_session_events(session_id: str):
+    return {"events": event_store.get_events(session_id)}
+
+
+@app.get("/api/sessions/{session_id}/export")
+async def api_session_export(session_id: str):
+    sess = event_store.get_session(session_id)
+    if not sess:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    raw = event_store.get_events(session_id)
+    processor = DataProcessor()
+    subject_id = ""
+    session_name = ""
+    if sess.get("config_json"):
+        try:
+            cfg = json.loads(sess["config_json"])
+            subject_id = cfg.get("subject_id", "")
+            session_name = cfg.get("name", sess.get("name", ""))
+        except Exception:
+            pass
+    structured = processor.to_structured(processor.process(raw), session_id=session_id, subject_id=subject_id, session_name=session_name)
+    csv_path = export_session_csv(structured, session_id, os.path.join(PROJECT_ROOT, "data"), subject_id=subject_id, session_name=session_name)
+    return {"csv_path": csv_path, "count": len(structured)}
+
+
+@app.get("/api/flows")
+async def api_flows():
+    flows_dir = os.path.join(PROJECT_ROOT, "data")
+    flows = []
+    for f in os.listdir(flows_dir):
+        if f.endswith(".json") and f.startswith("flow_"):
+            with open(os.path.join(flows_dir, f), "r") as fh:
+                data = json.load(fh)
+                flows.append({"id": f, "name": data.get("name", f)})
+    return {"flows": flows}
+
+
+def _safe_filename(name: str) -> str:
+    import re
+    safe = re.sub(r'[^\w\u4e00-\u9fff\-]', '_', name)
+    return safe[:64]
+
+
+@app.post("/api/flows/save")
+async def api_save_flow(data: dict):
+    name = data.get("name", "unnamed")
+    flow_data = data.get("flow", {})
+    safe_name = _safe_filename(name)
+    filename = f"flow_{safe_name}_{int(time.time())}.json"
+    path = os.path.join(PROJECT_ROOT, "data", filename)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(flow_data, f, ensure_ascii=False, indent=2)
+    return {"filename": filename}
+
+
+@app.get("/api/flows/{filename}")
+async def api_load_flow(filename: str):
+    path = os.path.join(PROJECT_ROOT, "data", filename)
+    if not os.path.exists(path):
+        raise HTTPException(404, "流程文件不存在")
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+@app.post("/api/flows/validate")
+async def api_validate_flow(data: dict):
+    try:
+        flow = FlowGraph.from_dict(data)
+        result = validate_flow(flow)
+        return {"valid": result.valid, "errors": result.errors, "warnings": result.warnings}
+    except Exception as e:
+        return {"valid": False, "errors": [str(e)], "warnings": []}
+
+
+@app.post("/api/experiment/run-flow")
+async def api_run_flow(data: dict):
+    global bus, engine, session, _experiment_active
+    flow_data = data.get("flow", {})
+    duration_s = data.get("duration", 30)
+    subject_id = data.get("subject_id", "")
+    exp_name = data.get("exp_name", "")
+    safe_name = exp_name or flow_data.get("name", "流程实验")
+    if duration_s < 1 or duration_s > 86400:
+        raise HTTPException(400, "运行时长需在 1~86400 秒之间")
+    try:
+        flow = FlowGraph.from_dict(flow_data)
+    except Exception as e:
+        raise HTTPException(400, f"流程解析失败: {e}")
+
+    result = validate_flow(flow)
+    if not result.valid:
+        raise HTTPException(400, f"流程校验失败: {result.errors}")
+
+    async with _mutex:
+        if _experiment_active:
+            raise HTTPException(400, "实验正在运行中，请先停止")
+
+        s = Session()
+        config = ExperimentConfig(name=safe_name, description="流程实验", session_timeout_ms=duration_s * 2000, flow=flow)
+        s.load(config)
+        event_store.ensure_session(s.id, name=config.name, config_json=json.dumps({
+            "name": safe_name, "subject_id": subject_id, "flow_name": flow.name,
+        }, ensure_ascii=False))
+
+        e = Engine()
+        e.set_send_action(lambda cmd: _on_action(cmd, s))
+        e.set_on_engine_event(lambda kind, data: _on_engine_evt(kind, data, s))
+
+        b = SignalBus()
+        b.register(MockSignalSource("mock:0", event_interval_ms=1500))
+        b.register(TimerSource("timer:0", tick_interval_ms=1000))
+
+        collected_signals = []
+
+        def _on_signal(event: SignalEvent):
+            collected_signals.append(event)
+            event_store.append_event(
+                session_id=s.id,
+                event_type=f"{event.source_type.value}_{event.signal_id.split(':')[-1]}",
+                ts_ms=event.ts_ms,
+                signal_id=f"{event.source_id}:{event.signal_id}",
+                raw_payload={"value": event.value, "data": event.data},
+            )
+            asyncio.run_coroutine_threadsafe(
+                broadcast({"type": "signal", "session_id": s.id, "signal_id": f"{event.source_id}:{event.signal_id}", "ts": event.ts_ms, "value": str(event.value)}),
+                _loop,
+            )
+            asyncio.run_coroutine_threadsafe(e.feed_signal(event), _loop)
+
+        b.set_on_signal(_on_signal)
+
+        async def run():
+            global _experiment_active
+            try:
+                await b.start_all()
+                await e.start(s)
+                start_ts = time.time()
+                while time.time() - start_ts < duration_s:
+                    await asyncio.sleep(0.1)
+                await e.stop()
+                await b.stop_all()
+                await asyncio.sleep(0.1)
+                event_store.update_session_state(s.id, s.state.value)
+                raw = event_store.get_events(s.id)
+                processor = DataProcessor()
+                structured = processor.to_structured(processor.process(raw), session_id=s.id, subject_id=subject_id, session_name=safe_name)
+                csv_path = export_session_csv(structured, s.id, os.path.join(PROJECT_ROOT, "data"), subject_id=subject_id, session_name=safe_name)
+                await broadcast({"type": "flow_complete", "session_id": s.id, "event_count": len(raw), "csv_path": csv_path})
+            except Exception as exc:
+                logger.exception(f"流程实验异常: {exc}")
+            finally:
+                _experiment_active = False
+
+        _experiment_active = True
+        asyncio.create_task(run())
+        session = s
+        engine = e
+        bus = b
+    return {"status": "started", "session_id": s.id, "flow_name": flow.name}
+
+
+def _on_action(cmd: dict, s: Session) -> bool:
+    event_store.append_event(
+        session_id=s.id, event_type="output_executed",
+        ts_ms=int(time.time() * 1000), node_id=cmd.get("node_id", ""),
+        actuator_id=cmd.get("actuator_id", ""), action_type=cmd.get("action", ""),
+        raw_payload={"duration_ms": cmd.get("duration_ms", 0)},
+    )
+    return True
+
+
+def _on_engine_evt(kind: str, data: dict, s: Session):
+    event_store.append_event(
+        session_id=s.id, event_type=kind, ts_ms=int(time.time() * 1000),
+        node_id=data.get("node_id", ""), signal_id=data.get("signal_id", ""),
+        raw_payload=data,
+    )
+
+
+@app.post("/api/device/connect")
+async def api_device_connect(data: dict):
+    global _mock_device_mgr
+    host = data.get("host", "192.168.4.1")
+    port = data.get("port", 8080)
+    try:
+        from protocol.device_manager import DeviceManager, DeviceInfo
+        mgr = DeviceManager()
+        info = DeviceInfo(device_id="web_connect", name="Web GUI", transport_type="ws", host=host, port=port)
+        import asyncio
+        ok = await asyncio.wait_for(mgr.connect_ws(info), timeout=5)
+        if ok:
+            _mock_device_mgr = mgr
+            return {"ok": True, "device_id": mgr.device_id}
+        return {"ok": False, "error": "连接超时或拒绝"}
+    except ImportError:
+        return {"ok": False, "error": "device_manager 模块未就绪"}
+    except asyncio.TimeoutError:
+        return {"ok": False, "error": "连接超时"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/device/disconnect")
+async def api_device_disconnect():
+    global _mock_device_mgr
+    if _mock_device_mgr:
+        await _mock_device_mgr.disconnect()
+        _mock_device_mgr = None
+    return {"ok": True}
+
+
+@app.post("/api/experiment/camera-event")
+async def api_camera_event(data: dict):
+    zone = data.get("zone", "未知区域")
+    event = data.get("event", "unknown")
+    ts = data.get("ts", int(time.time() * 1000))
+    experiment_id = data.get("experiment_id", "")
+    signal_id = f"camera:{zone}:{event}"
+    session_key = f"camera_{experiment_id}" if experiment_id else "camera_detection"
+    if event_store:
+        event_store.ensure_session(session_key, name="摄像头检测", experiment_id=experiment_id)
+        event_store.append_event(
+            session_id=session_key,
+            event_type=f"camera_{event}",
+            ts_ms=ts,
+            signal_id=signal_id,
+            raw_payload={"zone": zone, "event": event, "experiment_id": experiment_id},
+        )
+    if engine and engine.is_running and _loop:
+        from protocol.signal_source import SignalEvent, SourceType
+        sig = SignalEvent(
+            source_id="camera:0",
+            source_type=SourceType.CAMERA,
+            signal_id=signal_id,
+            ts_ms=ts,
+            value=1 if event == "enter" else 0,
+            data={"zone": zone, "event": event, "experiment_id": experiment_id},
+        )
+        asyncio.run_coroutine_threadsafe(engine.feed_signal(sig), _loop)
+    return {"ok": True}
+
+
+# === 实验管理 API ===
+
+@app.post("/api/experiments")
+async def api_create_experiment(data: dict):
+    hardware_count = data.get("hardware_count", 0)
+    if hardware_count < 0 or hardware_count > 8:
+        raise HTTPException(400, "设备数量必须在 0~8 之间")
+    exp_id = create_experiment(
+        name=data.get("name", ""),
+        subject_id=data.get("subject_id", ""),
+        species=data.get("species", ""),
+        subject_notes=data.get("subject_notes", ""),
+        notes=data.get("notes", ""),
+        max_duration_min=data.get("max_duration_min", 30),
+        max_trigger_count=data.get("max_trigger_count", 50),
+        trigger_manual=data.get("trigger_manual", True),
+        trigger_camera=data.get("trigger_camera", False),
+        trigger_hardware=data.get("trigger_hardware", False),
+        hardware_count=hardware_count,
+        camera_zones=data.get("camera_zones", []),
+        start_mode=data.get("start_mode", "manual"),
+        timer_config=data.get("timer_config", {}),
+        save_path=data.get("save_path", ""),
+    )
+    return {"id": exp_id}
+
+
+@app.get("/api/experiments")
+async def api_list_experiments():
+    return {"experiments": list_experiments()}
+
+
+@app.get("/api/experiments/{exp_id}")
+async def api_get_experiment(exp_id: str):
+    exp = get_experiment(exp_id)
+    if not exp:
+        raise HTTPException(404, "实验不存在")
+    # Attach folder path
+    folder = exp.get("_folder", "")
+    if folder:
+        exp["folder_path"] = folder
+    return exp
+
+
+@app.get("/api/experiments/{exp_id}/sessions")
+async def api_experiment_sessions(exp_id: str):
+    sessions = event_store.get_sessions_by_experiment(exp_id)
+    return {"sessions": sessions}
+
+
+@app.post("/api/experiments/{exp_id}")
+async def api_update_experiment(exp_id: str, data: dict):
+    ok = update_experiment(exp_id, data)
+    if not ok:
+        raise HTTPException(404, "实验不存在")
+    return {"ok": True}
+
+
+@app.delete("/api/experiments/{exp_id}")
+async def api_delete_experiment(exp_id: str):
+    ok = delete_experiment(exp_id)
+    if not ok:
+        raise HTTPException(404, "实验不存在")
+    return {"ok": True}
+
+
+@app.post("/api/experiments/{exp_id}/clone")
+async def api_clone_experiment(exp_id: str, data: dict):
+    new_id = clone_experiment(exp_id, data.get("new_name", ""))
+    if not new_id:
+        raise HTTPException(404, "源实验不存在")
+    return {"id": new_id}
+
+
+@app.post("/api/experiments/{exp_id}/open-folder")
+async def api_open_experiment_folder(exp_id: str):
+    exp = get_experiment(exp_id)
+    if not exp:
+        raise HTTPException(404, "实验不存在")
+    folder = exp.get("_folder", "")
+    if folder and os.path.isdir(folder):
+        subprocess.Popen(["open", folder])
+    return {"ok": True}
+
+
+# === 目录选择器 ===
+
+
+@app.post("/api/browse-folder")
+async def api_browse_folder():
+    """打开原生目录选择器，返回用户选择的路径。"""
+    import platform
+
+    if platform.system() == "Darwin":
+        try:
+            result = subprocess.run(
+                ["osascript", "-e",
+                 'set folderPath to choose folder with prompt "选择实验保存位置:"\n'
+                 "return POSIX path of folderPath"],
+                capture_output=True, text=True, timeout=120,
+            )
+            if result.returncode == 0:
+                return {"path": result.stdout.strip()}
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+
+    # 非 macOS 或 osascript 失败：尝试 tkinter
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        path = filedialog.askdirectory(title="选择实验保存位置")
+        root.destroy()
+        if path:
+            return {"path": path}
+    except Exception:
+        pass
+
+    return {"path": ""}
+
+
+# === 摄像头配置持久化 ===
+
+
+def _get_camera_config_path(experiment_id: str = None) -> str:
+    if experiment_id:
+        exp = get_experiment(experiment_id)
+        if exp and exp.get("_folder"):
+            return os.path.join(exp["_folder"], "camera.json")
+    return _camera_config_path
+
+
+def _load_camera_config(experiment_id: str = None) -> dict:
+    path = _get_camera_config_path(experiment_id)
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save_camera_config(config: dict, experiment_id: str = None):
+    path = _get_camera_config_path(experiment_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+
+
+@app.post("/api/camera/config")
+async def api_camera_save_config(data: dict):
+    config = data.get("config", {})
+    experiment_id = data.get("experiment_id", None)
+    _save_camera_config(config, experiment_id)
+    return {"ok": True}
+
+
+@app.get("/api/camera/config")
+async def api_camera_load_config(experiment_id: str = None):
+    return {"config": _load_camera_config(experiment_id)}
+
+
+@app.get("/api/sources")
+async def api_list_sources(experiment_id: str = None):
+    """返回所有可用信号源列表（供流程编辑器 TRIGGER 节点下拉）"""
+    sources = []
+    sources.append({"id": "生成信号", "label": "程序生成信号（无硬件时测试用）", "type": "mock"})
+    sources.append({"id": "硬件传感器", "label": "硬件传感器（控制盒）", "type": "hardware"})
+    zones_config = _load_camera_config(experiment_id).get("zones", [])
+    for z in zones_config:
+        name = z.get("name", "区域")
+        sources.append({"id": f"camera:{name}:enter", "label": f"摄像头 - {name} - 进入", "type": "camera"})
+        sources.append({"id": f"camera:{name}:leave", "label": f"摄像头 - {name} - 离开", "type": "camera"})
+    return {"sources": sources}
+
+
+@app.get("/api/stats/daily")
+async def api_daily_stats(days: int = 7):
+    return {"stats": event_store.get_daily_aggregation("", days=days)}
+
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="行为学训练盒上位机")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"监听端口（默认 {DEFAULT_PORT}）")
+    args = parser.parse_args()
+
+    config = uvicorn.Config(app, host="0.0.0.0", port=args.port, log_level="info")
+    server = uvicorn.Server(config)
+
+    def _shutdown(signum, frame):
+        """优雅关闭：通知 uvicorn 停止，触发 lifespan 的 yield 后清理"""
+        if server:
+            server.should_exit = True
+
+    signal.signal(signal.SIGTERM, _shutdown)
+    signal.signal(signal.SIGINT, _shutdown)
+
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        # lifespan yield 已执行 engine.stop() + bus.stop_all() + db.close()
+        logger = logging.getLogger("BehaviorBox")
+        logger.info("服务器已优雅关闭")
+
+
+if __name__ == "__main__":
+    main()

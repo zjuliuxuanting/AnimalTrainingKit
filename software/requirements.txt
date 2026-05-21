@@ -1,0 +1,19 @@
+# 核心
+pyserial>=3.5
+esptool>=4.6
+numpy>=1.24
+
+# 通信
+websockets>=11.0
+bleak>=0.20
+
+# 摄像头
+opencv-python>=4.8
+
+# Web GUI（替代 PyQt6）
+fastapi>=0.100.0
+uvicorn>=0.22.0
+
+# 旧 GUI（已归档）
+# PyQt6>=6.5
+# PyQt6-WebEngine>=6.5

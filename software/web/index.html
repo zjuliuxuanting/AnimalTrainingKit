@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>行为学训练盒</title>
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+<div class="toast" id="toastContainer"></div>
+
+<div id="loadingOverlay" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(255,255,255,0.92);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity 0.4s">
+  <div style="width:36px;height:36px;border:3px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin 0.8s linear infinite;margin-bottom:12px"></div>
+  <div style="font-size:14px;color:var(--text-secondary)">正在加载实验数据...</div>
+</div>
+
+<style>
+@keyframes spin { to { transform:rotate(360deg) } }
+</style>
+
+<nav class="navbar">
+  <h1>🧪 行为学训练盒</h1>
+  <div class="status" id="navStatus">服务运行中</div>
+</nav>
+
+<div class="tabs" id="tabs">
+  <div class="tab active" data-tab="device">📡 设备</div>
+  <div class="tab" data-tab="experiment">🧪 实验管理</div>
+  <div class="tab" data-tab="camera">📷 摄像头</div>
+  <div class="tab" data-tab="flow">🔀 流程编辑</div>
+  <div class="tab" data-tab="monitor">📊 运行监控</div>
+  <div class="tab" data-tab="data">📈 数据图表</div>
+</div>
+
+<!-- Tab: Device -->
+<div class="tab-content active" id="tab-device">
+  <div class="card">
+    <h3>📡 硬件控制盒</h3>
+    <div class="flex flex-wrap" style="align-items:end">
+      <div class="form-group" style="flex:1;min-width:120px"><label>IP 地址</label><input id="deviceHost" value="192.168.4.1"></div>
+      <div class="form-group" style="flex:0;width:80px"><label>端口</label><input id="devicePort" value="8080"></div>
+      <div style="padding-bottom:12px">
+        <button class="btn btn-success btn-sm" onclick="connectDevice()">🔗 连接</button>
+        <button class="btn btn-danger btn-sm" onclick="disconnectDevice()" disabled>🔗 断开</button>
+      </div>
+    </div>
+    <div id="deviceStatus" style="font-size:13px;color:var(--text-secondary)">控制盒未连接</div>
+  </div>
+</div>
+
+<!-- Tab: Experiment -->
+<div class="tab-content" id="tab-experiment">
+  <div class="flex" style="margin-bottom:12px;justify-content:space-between;align-items:center">
+    <h2 style="margin:0">实验管理</h2>
+    <button class="btn btn-success" onclick="showCreateForm()">＋ 新建实验</button>
+  </div>
+
+  <!-- Create Form (hidden by default) -->
+  <div class="card" id="createExpCard" style="display:none">
+    <h3>新实验</h3>
+
+    <div class="form-group"><label>实验名称</label><input id="expName" placeholder="例：A01-固定比例训练-Day3"></div>
+    <div class="form-group"><label>动物编号</label><input id="expSubjectId" placeholder="例：A01、WT-001"></div>
+
+    <div class="grid-3" style="grid-template-columns:1fr 1fr 1fr;margin-bottom:8px">
+      <div class="form-group"><label>物种/品系</label><input id="expSpecies" placeholder="如 C57BL/6、SD大鼠、仓鼠"></div>
+      <div class="form-group"><label>动物备注（可选）</label><input id="expSubjectNotes" placeholder="体重、性别、健康状况等"></div>
+      <div class="form-group"><label>实验备注（可选）</label><input id="expNotes" placeholder="今天的训练目的是..."></div>
+    </div>
+
+    <hr style="border:none;border-top:1px solid var(--border);margin:12px 0">
+
+    <h4 style="margin:0 0 8px 0">实验停止条件</h4>
+    <div class="form-group">
+      <label>运行超过以下时间后自动停止</label>
+      <div style="display:flex;gap:4px;align-items:center">
+        <input id="expDuration" type="number" value="30" style="flex:1;max-width:120px;padding:8px;border:1px solid var(--border);border-radius:6px">
+        <span>分钟</span>
+        <label style="font-size:11px;white-space:nowrap;margin:0 0 0 8px"><input type="checkbox" id="expDurationUnlimited" onchange="document.getElementById('expDuration').disabled=this.checked"> 不限时间</label>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>累计触发次数达到以下次数后自动停止</label>
+      <div style="display:flex;gap:4px;align-items:center">
+        <input id="expMaxTriggers" type="number" value="50" style="flex:1;max-width:120px;padding:8px;border:1px solid var(--border);border-radius:6px">
+        <span>次</span>
+        <label style="font-size:11px;white-space:nowrap;margin:0 0 0 8px"><input type="checkbox" id="expTriggersUnlimited" onchange="document.getElementById('expMaxTriggers').disabled=this.checked"> 不设上限</label>
+      </div>
+    </div>
+    <p style="margin:0 0 12px 0;font-size:12px;color:var(--text-secondary)">两个条件中任意一个先达到时，实验自动停止。都不设置则实验永不自动停止。</p>
+
+    <hr style="border:none;border-top:1px solid var(--border);margin:12px 0">
+
+    <h4 style="margin:0 0 8px 0">启动方式</h4>
+    <div>
+      <div style="margin:4px 0">
+        <input type="radio" name="startModeGroup" value="manual" checked onchange="onStartModeChangeRadio()" id="startManual">
+        <label for="startManual">手动启动（创建后手动点击▶启动）</label>
+      </div>
+      <div style="margin:4px 0">
+        <input type="radio" name="startModeGroup" value="timer" onchange="onStartModeChangeRadio()" id="startTimer">
+        <label for="startTimer">定时自动启动</label>
+      </div>
+    </div>
+    <div id="timerConfig" style="display:none;margin-top:8px;margin-left:24px;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary)">
+      <div style="margin:4px 0">
+        <input type="radio" name="timerType" value="fixed" checked onchange="onTimerTypeChange()" id="timerFixed">
+        <label for="timerFixed">在以下时间点自动启动</label>
+      </div>
+      <div id="fixedTimeArea" style="margin:8px 0 8px 24px">
+        <label style="font-size:11px">日期：</label><input id="expFixedDate" type="date" style="padding:6px;border:1px solid var(--border);border-radius:4px;margin-right:8px">
+        <label style="font-size:11px">时间：</label><input id="expFixedTime" type="time" style="padding:6px;border:1px solid var(--border);border-radius:4px">
+      </div>
+      <div style="margin:4px 0">
+        <input type="radio" name="timerType" value="delay" onchange="onTimerTypeChange()" id="timerDelay">
+        <label for="timerDelay">创建后延迟以下时间自动启动</label>
+      </div>
+      <div id="delayTimeArea" style="display:none;margin:8px 0 8px 24px">
+        <input id="expDelayMinutes" type="number" value="30" style="width:100px;padding:6px;border:1px solid var(--border);border-radius:4px">
+        <span style="margin-left:4px;font-size:12px">分钟后启动</span>
+      </div>
+    </div>
+
+    <hr style="border:none;border-top:1px solid var(--border);margin:12px 0">
+
+    <h4 style="margin:0 0 8px 0">触发源</h4>
+    <div style="margin:4px 0">
+      <label style="display:flex;align-items:center;gap:6px;font-weight:normal;margin:2px 0">
+        <input type="checkbox" id="expTriggerCamera" onchange="onTriggerCameraChange()"> 摄像头区域事件（需先配置摄像头）
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;font-weight:normal;margin:2px 0">
+        <input type="checkbox" id="expTriggerHardware" onchange="onTriggerHardwareChange()"> 下位机传感器
+      </label>
+      <div id="hardwareCountArea" style="display:none;margin:6px 0 2px 24px">
+        <label style="font-size:12px">连接的设备数量</label>
+        <input id="expHardwareCount" type="number" value="1" min="1" max="8" style="width:80px;padding:6px;border:1px solid var(--border);border-radius:4px;margin-left:4px">
+      </div>
+    </div>
+
+    <hr style="border:none;border-top:1px solid var(--border);margin:12px 0">
+
+    <div class="form-group">
+      <label>保存位置</label>
+      <div style="display:flex;gap:4px;align-items:center">
+        <input id="expSavePath" value="" placeholder="留空则保存到默认位置 data/experiments/" style="flex:1;padding:8px;border:1px solid var(--border);border-radius:6px">
+        <button class="btn btn-sm" onclick="browseSavePath()">📂 浏览</button>
+      </div>
+    </div>
+
+    <div class="flex" style="margin-top:12px;gap:8px">
+      <button class="btn btn-success" onclick="createExperiment()">✅ 创建实验</button>
+      <button class="btn btn-sm" onclick="hideCreateForm()">取消</button>
+    </div>
+  </div>
+
+  <!-- Experiment List -->
+  <div class="card" style="margin-top:12px">
+    <div class="flex" style="justify-content:space-between;align-items:center;margin-bottom:8px">
+      <h3 style="margin:0">实验记录</h3>
+      <div><input id="expFilter" placeholder="筛选动物编号或名称..." style="padding:4px 8px;border:1px solid var(--border);border-radius:4px" oninput="renderExperimentList()"></div>
+    </div>
+    <div id="experimentList"><div class="empty-state"><p>还没有实验记录，点击上方"新建实验"开始</p></div></div>
+  </div>
+</div>
+
+<!-- Modal -->
+<div id="appModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.4);z-index:1000;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:12px;max-width:520px;width:90%;max-height:80vh;overflow:auto;box-shadow:0 8px 32px rgba(0,0,0,0.15)">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border)">
+      <h3 id="modalTitle" style="margin:0;font-size:16px">详情</h3>
+      <button onclick="hideModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-secondary)">×</button>
+    </div>
+    <div id="modalBody" style="padding:16px 20px;font-size:14px;line-height:1.6"></div>
+  </div>
+</div>
+
+<!-- Tab: Flow Editor -->
+<div class="tab-content" id="tab-flow">
+  <div class="card">
+    <div class="flex" style="justify-content:space-between;align-items:center">
+      <h3 style="margin:0">实验流程编辑器</h3>
+      <div class="flex flex-wrap">
+        <button class="btn btn-sm" onclick="undoFlow()" title="撤销">↩ 撤销</button>
+        <button class="btn btn-sm" onclick="redoFlow()" title="重做">↪ 重做</button>
+        <button class="btn btn-success btn-sm" onclick="saveFlow()">💾 保存流程</button>
+        <button class="btn btn-primary btn-sm" onclick="loadFlow()">📂 加载流程</button>
+        <button class="btn btn-warning btn-sm" onclick="validateFlow()">✓ 校验</button>
+        <button class="btn btn-primary btn-sm" onclick="runFlow()">▶ 运行流程</button>
+      </div>
+    </div>
+    <p style="margin-top:8px;color:var(--text-secondary);font-size:12px">💡 从左侧拖拽节点到画布，连接节点来编排实验流程。开始和结束节点已固定在画布上。</p>
+  </div>
+  <div class="grid-2" style="grid-template-columns: 140px 1fr;">
+    <div class="card" style="padding:8px">
+      <h3 style="font-size:12px;margin-bottom:8px">节点面板</h3>
+      <div id="nodePalette">
+        <div class="palette-item" data-type="trigger">⚡ 触发（等待信号）</div>
+        <div class="palette-item" data-type="delay">⏱ 延时等待</div>
+        <div class="palette-item" data-type="condition">🔀 条件判断</div>
+        <div class="palette-item" data-type="execute">🛠 执行动作</div>
+        <div class="palette-item" data-type="loop">🔄 循环</div>
+        <div class="palette-item" data-type="variable">📦 变量操作</div>
+        <div class="palette-item" data-type="record">📝 记录事件</div>
+      </div>
+    </div>
+    <div class="card" style="padding:0;overflow:hidden">
+      <div id="flowCanvas" style="width:100%;height:500px;position:relative;background:#fafafa;border:1px solid var(--border);border-radius:6px;overflow:hidden">
+        <svg id="flowSvg" style="width:100%;height:100%;position:absolute;top:0;left:0;pointer-events:none"></svg>
+        <div id="flowNodes" style="position:relative;z-index:1"></div>
+      </div>
+    </div>
+  </div>
+  <div class="card" id="flowConfigPanel" style="display:none">
+    <h3>节点参数设置</h3>
+    <div class="grid-2" id="flowConfigForm">
+      <div class="form-group"><label>节点名称</label><input id="cfgLabel" onchange="updateNodeConfig()"></div>
+      <div class="form-group" id="cfgExtra"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Tab: Monitor -->
+<div class="tab-content" id="tab-monitor">
+  <div class="grid-3" id="monitorStats">
+    <div class="card stat-card">
+      <div class="value" id="monEvents">0</div>
+      <div class="label">事件数</div>
+    </div>
+    <div class="card stat-card">
+      <div class="value" id="monDuration">0s</div>
+      <div class="label">已运行</div>
+    </div>
+    <div class="card stat-card">
+      <div class="value" id="monStatus">-</div>
+      <div class="label">状态</div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>实时事件日志</h3>
+    <div class="event-log" id="eventLog">等待实验开始...</div>
+  </div>
+</div>
+
+<!-- Tab: Charts -->
+<div class="tab-content" id="tab-data">
+  <div class="card">
+    <h3>每日事件统计</h3>
+    <div id="chartSummary" style="width:100%;height:300px"></div>
+  </div>
+  <div class="card">
+    <h3>实验趋势对比</h3>
+    <div class="flex mb-8">
+      <button class="btn btn-sm btn-primary" onclick="loadChart('7')">最近 7 天</button>
+      <button class="btn btn-sm btn-primary" onclick="loadChart('14')">最近 14 天</button>
+      <button class="btn btn-sm btn-primary" onclick="loadChart('30')">最近 30 天</button>
+    </div>
+    <div id="chartTrend" style="width:100%;height:300px"></div>
+  </div>
+</div>
+
+<!-- Tab: Camera -->
+<div class="tab-content" id="tab-camera">
+  <div id="cameraExpBadge" style="display:none;background:#E3F2FD;color:#1565C0;padding:6px 12px;border-radius:6px;margin-bottom:8px;font-size:13px;font-weight:500"></div>
+  <div class="card">
+    <div class="camera-step-indicator" id="cameraSteps">
+      <div class="camera-step-dot active" data-step="0">1</div>
+      <div class="camera-step-dot" data-step="1">2</div>
+      <div class="camera-step-dot" data-step="2">3</div>
+      <div class="camera-step-dot" data-step="3">4</div>
+      <div class="camera-step-dot" data-step="4">5</div>
+      <div class="camera-step-dot" data-step="5">6</div>
+      <div class="camera-step-dot" data-step="6">7</div>
+    </div>
+    <div style="font-size:12px;color:var(--text-secondary);text-align:center;margin-bottom:12px">
+      <span id="cameraStepTitle">第 1 步：选择摄像头</span>
+    </div>
+    <div class="flex" style="justify-content:center;gap:4px;margin-bottom:12px">
+      <button class="btn btn-sm" id="camPrev" onclick="cameraPrevStep()" disabled>← 上一步</button>
+      <button class="btn btn-sm btn-primary" id="camNext" onclick="cameraNextStep()">下一步 →</button>
+    </div>
+  </div>
+
+  <div class="card camera-step active" id="camStep0">
+    <h3>① 选择摄像头</h3>
+    <p style="color:var(--text-secondary);font-size:13px;margin-bottom:8px">请选择一个已连接的 USB 摄像头</p>
+    <div class="flex">
+      <select id="camSelect" style="flex:1;padding:8px;border:1px solid var(--border);border-radius:6px">
+        <option value="">-- 正在检测摄像头 --</option>
+      </select>
+      <button class="btn btn-sm btn-primary" onclick="refreshCameraList()">🔄 刷新</button>
+    </div>
+    <div id="camSelectStatus" style="margin-top:8px;color:var(--text-secondary);font-size:12px"></div>
+  </div>
+
+  <div class="card camera-step" id="camStep1">
+    <h3>② 定义追踪目标</h3>
+    <p style="color:var(--text-secondary);font-size:13px;margin-bottom:8px">选择动物颜色对比方向。不是按品种，而是**比背景深还是浅**。</p>
+    <div class="form-group">
+      <label>动物颜色对比（相对背景）</label>
+      <div style="display:flex;gap:12px;margin-top:4px">
+        <label style="display:flex;align-items:center;gap:4px;padding:8px 16px;border:2px solid var(--border);border-radius:8px;cursor:pointer" id="contrastDark" onclick="setContrast('dark')">
+          <input type="radio" name="contrast" value="dark" checked> ⬛ 比背景更暗
+        </label>
+        <label style="display:flex;align-items:center;gap:4px;padding:8px 16px;border:2px solid var(--border);border-radius:8px;cursor:pointer" id="contrastLight" onclick="setContrast('light')">
+          <input type="radio" name="contrast" value="light"> ⬜ 比背景更亮
+        </label>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>检测算法</label>
+      <select id="camAlgo" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px">
+        <option value="bgsub">背景差分（推荐）</option>
+        <option value="graythresh">灰度阈值</option>
+        <option value="silhouette">动态剪影</option>
+        <option value="colordetect">颜色检测</option>
+      </select>
+    </div>
+    <div id="subjectParams" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">
+      <div class="form-group"><label>检测灵敏度（越小越敏感）</label><input type="range" id="camSensitivity" min="1" max="100" value="30" oninput="document.getElementById('camSensitivityVal').textContent=this.value"><span id="camSensitivityVal" style="font-size:12px;color:var(--text-secondary)">30</span></div>
+      <div class="form-group"><label>最小对象尺寸（像素）</label><input type="range" id="camMinArea" min="50" max="2000" value="500" oninput="document.getElementById('camMinAreaVal').textContent=this.value"><span id="camMinAreaVal" style="font-size:12px;color:var(--text-secondary)">500</span></div>
+    </div>
+    <div style="margin-top:12px">
+      <button class="btn btn-sm" id="btnToggleAdvanced" onclick="toggleAdvancedParams()" style="width:100%;text-align:left">⚙ 高级参数 ▸</button>
+      <div id="advancedParams" style="display:none;margin-top:8px;padding:12px;background:var(--bg-secondary);border-radius:8px">
+        <div class="form-group"><label>灰度阈值范围</label><div style="display:flex;gap:8px;align-items:center"><input type="range" id="camThreshLow" min="0" max="255" value="30" style="flex:1" oninput="document.getElementById('camThreshLowVal').textContent=this.value"><span id="camThreshLowVal" style="font-size:12px;min-width:24px">30</span><span style="font-size:12px;color:var(--text-secondary)">—</span><input type="range" id="camThreshHigh" min="0" max="255" value="220" style="flex:1" oninput="document.getElementById('camThreshHighVal').textContent=this.value"><span id="camThreshHighVal" style="font-size:12px;min-width:24px">220</span></div></div>
+        <div class="form-group"><label>帧权重（α 融合系数）</label><input type="range" id="camFrameWeight" min="1" max="100" value="70" oninput="document.getElementById('camFrameWeightVal').textContent=(this.value/100).toFixed(2)"><span id="camFrameWeightVal" style="font-size:12px;color:var(--text-secondary)">0.70</span></div>
+        <div class="form-group"><label>像素平滑（高斯模糊半径）</label><input type="range" id="camPixelSmooth" min="0" max="10" value="1" oninput="document.getElementById('camPixelSmoothVal').textContent=this.value"><span id="camPixelSmoothVal" style="font-size:12px;color:var(--text-secondary)">1</span></div>
+        <div class="form-group"><label>平滑轨迹（移动平均窗口）</label><input type="range" id="camSmoothTrajectory" min="0" max="30" value="5" oninput="document.getElementById('camSmoothTrajectoryVal').textContent=this.value"><span id="camSmoothTrajectoryVal" style="font-size:12px;color:var(--text-secondary)">5</span></div>
+        <div class="form-group"><label>丢帧矫正（最大丢失帧数）</label><input type="range" id="camDropFrame" min="0" max="10" value="2" oninput="document.getElementById('camDropFrameVal').textContent=this.value"><span id="camDropFrameVal" style="font-size:12px;color:var(--text-secondary)">2</span></div>
+        <div class="form-group"><label>轮廓侵蚀（像素迭代次数）</label><input type="range" id="camContourErosion" min="0" max="5" value="0" oninput="document.getElementById('camContourErosionVal').textContent=this.value"><span id="camContourErosionVal" style="font-size:12px;color:var(--text-secondary)">0</span></div>
+        <div class="form-group"><label>对象大小范围（像素面积）</label><div style="display:flex;gap:8px;align-items:center"><input type="number" id="camObjSizeMin" value="100" min="10" max="5000" style="width:80px;padding:4px 8px;border:1px solid var(--border);border-radius:4px"><span style="font-size:12px;color:var(--text-secondary)">—</span><input type="number" id="camObjSizeMax" value="5000" min="10" max="50000" style="width:80px;padding:4px 8px;border:1px solid var(--border);border-radius:4px"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card camera-step" id="camStep2">
+    <h3>③ 背景建模</h3>
+    <p style="color:var(--text-secondary);font-size:13px;margin-bottom:8px">软件会自动建立参考背景。选择一种方式：</p>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <button class="btn btn-sm btn-primary" id="bgMethodAuto" onclick="setBgMethod('auto')" style="flex:1">🔄 自动采集（30帧取中值）</button>
+      <button class="btn btn-sm" id="bgMethodFill" onclick="setBgMethod('fill')" style="flex:1">✏️ 框选动物自动填充</button>
+    </div>
+    <div id="bgAutoArea" style="text-align:center">
+      <video id="camPreviewBg" autoplay playsinline style="max-width:100%;border-radius:8px;background:#000;max-height:360px"></video>
+      <div class="flex" style="justify-content:center;margin-top:8px">
+        <button class="btn btn-success" id="btnCaptureBg" onclick="startAutoBackground()">📸 开始采集背景（30帧）</button>
+      </div>
+      <div id="camBgProgress" style="margin-top:4px;color:var(--text-secondary);font-size:12px">点击按钮开始自动采集，请保持画面稳定</div>
+    </div>
+    <div id="bgFillArea" style="display:none;text-align:center">
+      <p style="color:var(--text-secondary);font-size:12px;margin-bottom:8px">框出动物所在区域，软件会自动用周围像素填充</p>
+      <canvas id="camFillCanvas" style="max-width:100%;border-radius:8px;background:#000;max-height:360px;cursor:crosshair"></canvas>
+      <div class="flex" style="justify-content:center;margin-top:8px;gap:8px">
+        <button class="btn btn-sm btn-primary" onclick="startFillBox()">✏️ 框选动物位置</button>
+        <button class="btn btn-success btn-sm" onclick="applyFillBg()">✅ 生成背景</button>
+      </div>
+      <div id="camFillStatus" style="margin-top:4px;color:var(--text-secondary);font-size:12px">先框选动物，再点生成背景</div>
+    </div>
+  </div>
+
+  <div class="card camera-step" id="camStep3">
+    <h3>④ 标尺校准</h3>
+    <p style="color:var(--text-secondary);font-size:13px;margin-bottom:8px">在画面上点击两点画一条线段，输入该线段对应的真实长度（如10厘米），系统自动计算像素与实际距离的比例。</p>
+    <div style="text-align:center">
+      <canvas id="camRulerCanvas" style="max-width:100%;border-radius:8px;background:#000;max-height:400px;cursor:crosshair"></canvas>
+    </div>
+    <div class="form-group" style="margin-top:8px;display:flex;align-items:center;gap:8px;justify-content:center">
+      <label style="white-space:nowrap">线段实际长度:</label>
+      <input id="camRulerLength" type="number" value="10" min="0.1" step="0.1" style="width:100px;padding:6px;border:1px solid var(--border);border-radius:4px">
+      <select id="camRulerUnit" style="width:80px;padding:6px;border:1px solid var(--border);border-radius:4px">
+        <option value="cm">厘米</option>
+        <option value="m">米</option>
+      </select>
+      <button class="btn btn-sm btn-primary" onclick="applyRuler()">✅ 确认校准</button>
+    </div>
+    <div id="camRulerStatus" style="margin-top:8px;color:var(--text-secondary);font-size:12px;text-align:center">点击画面上两点，画一条已知长度的线段</div>
+    <div style="text-align:center;margin-top:8px">
+      <button class="btn btn-sm" onclick="resetRuler()">🔄 重新校准</button>
+    </div>
+  </div>
+
+  <div class="card camera-step" id="camStep4">
+    <h3>⑤ 绘制检测区域</h3>
+    <p style="color:var(--text-secondary);font-size:13px;margin-bottom:8px">在画面上点击顶点绘制多边形区域。双击最后一个顶点闭合多边形。</p>
+    <div style="position:relative;text-align:center">
+      <canvas id="camCanvas" style="max-width:100%;border-radius:8px;background:#000;max-height:400px;cursor:crosshair"></canvas>
+      <div id="camZones"></div>
+    </div>
+    <div class="flex" style="justify-content:center;margin-top:8px;gap:8px">
+      <button class="btn btn-sm btn-primary" onclick="addZone()">➕ 添加区域</button>
+      <button class="btn btn-sm btn-danger" onclick="removeLastZone()">➖ 删除区域</button>
+    </div>
+    <div id="zoneList" style="margin-top:8px"></div>
+  </div>
+
+  <div class="card camera-step" id="camStep5">
+    <h3>⑥ 区域事件定义</h3>
+    <p style="color:var(--text-secondary);font-size:13px;margin-bottom:8px">为每个检测区域命名，配置事件类型。动物进入/离开/累计N次/停留X秒时会产生触发信号，可在流程编辑器中引用。</p>
+    <div id="zoneConfigList"></div>
+  </div>
+
+  <div class="card camera-step" id="camStep6">
+    <h3>⑦ 开始检测</h3>
+    <p style="color:var(--text-secondary);font-size:13px;margin-bottom:8px">确认所有区域和事件配置无误后，开始摄像头检测。检测事件将写入当前实验的数据记录。</p>
+    <div class="flex" style="justify-content:center;margin-top:12px">
+      <button class="btn btn-success" onclick="startCameraDetection()" id="btnStartDetection">▶ 开始检测</button>
+      <button class="btn btn-danger" onclick="stopCameraDetection()" id="btnStopDetection" disabled>⏹ 停止检测</button>
+    </div>
+    <div id="cameraDetectStatus" style="margin-top:8px;color:var(--text-secondary);font-size:12px;text-align:center"></div>
+  </div>
+
+  <div class="card" id="camDetectionLog" style="display:none">
+    <h3>检测日志</h3>
+    <div class="event-log" id="camEventLog" style="height:200px">等待检测开始...</div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script src="/static/js/app.js?v=2"></script>
+<script src="/static/js/flow-editor.js?v=2"></script>
+<script src="/static/js/charts.js?v=2"></script>
+<script src="/static/js/camera.js?v=2"></script>
+</body>
+</html>

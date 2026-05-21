@@ -1,0 +1,20 @@
+{
+  "id": "exp_ddc05c55c90e",
+  "name": "P0验证实验",
+  "subject_id": "T01",
+  "species": "",
+  "subject_notes": "",
+  "notes": "",
+  "max_duration_min": 30,
+  "max_trigger_count": 10,
+  "trigger_manual": true,
+  "trigger_camera": true,
+  "trigger_hardware": false,
+  "hardware_count": 0,
+  "camera_zones": [],
+  "start_mode": "manual",
+  "timer_config": {},
+  "save_path": "/Applications/test/创业/毛孩儿/鸟类训练机/程序/行为学盒项目/behavior_box/software/data/experiments/P0验证实验",
+  "created_at": 1779293047474,
+  "updated_at": 1779293047474
+}

@@ -1,0 +1,35 @@
+# macOS
+.DS_Store
+.DS_Store?
+
+# IDE
+.claude/
+.trae/
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+
+# Logs
+logs/
+*.log
+
+# Runtime data
+software/data/behavior_box.db
+software/data/behavior_box.db-shm
+software/data/behavior_box.db-wal
+software/data/*.csv
+software/data/*.json
+!software/data/__init__.py
+
+# Syncthing
+.stignore
