@@ -33,3 +33,8 @@ software/data/*.json
 
 # Syncthing
 .stignore
+
+# Project docs (not part of software repo)
+manage.sh
+角色/
+项目/
