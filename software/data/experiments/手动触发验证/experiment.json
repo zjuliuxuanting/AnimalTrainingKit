@@ -1,0 +1,20 @@
+{
+  "id": "exp_0002manual002",
+  "name": "手动触发验证",
+  "subject_id": "T02",
+  "species": "小鼠",
+  "subject_notes": "",
+  "notes": "验证手动触发流程",
+  "max_duration_min": 30,
+  "max_trigger_count": 50,
+  "trigger_manual": true,
+  "trigger_camera": false,
+  "trigger_hardware": false,
+  "hardware_count": 0,
+  "camera_zones": [],
+  "start_mode": "manual",
+  "timer_config": {},
+  "save_path": "/Applications/test/创业/毛孩儿/鸟类训练机/程序/行为学盒项目/behavior_box/software/data/experiments/手动触发验证",
+  "created_at": 1716635000000,
+  "updated_at": 1716635000000
+}

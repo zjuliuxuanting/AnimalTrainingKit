@@ -1,0 +1,20 @@
+{
+  "id": "exp_0003combo003",
+  "name": "综合管线测试",
+  "subject_id": "T03",
+  "species": "仓鼠",
+  "subject_notes": "",
+  "notes": "摄像头+手动综合测试",
+  "max_duration_min": 60,
+  "max_trigger_count": 100,
+  "trigger_manual": true,
+  "trigger_camera": true,
+  "trigger_hardware": false,
+  "hardware_count": 0,
+  "camera_zones": [],
+  "start_mode": "manual",
+  "timer_config": {},
+  "save_path": "/Applications/test/创业/毛孩儿/鸟类训练机/程序/行为学盒项目/behavior_box/software/data/experiments/综合管线测试",
+  "created_at": 1716636000000,
+  "updated_at": 1716636000000
+}

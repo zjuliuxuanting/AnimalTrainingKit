@@ -1362,6 +1362,12 @@ async function startTrackPreview() {
 
     const bgData = bgImageData.data;
 
+    const offscreen = document.createElement('canvas');
+    offscreen.width = canvas.width;
+    offscreen.height = canvas.height;
+    const offCtx = offscreen.getContext('2d');
+    offCtx.font = '13px sans-serif';
+
     let prevFrame = null;
     let detectCount = 0;
 
@@ -1377,10 +1383,10 @@ async function startTrackPreview() {
       const objSizeMin = parseInt(document.getElementById('camObjSizeMin')?.value || 100);
       const objSizeMax = parseInt(document.getElementById('camObjSizeMax')?.value || 5000);
 
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      offCtx.drawImage(video, 0, 0, offscreen.width, offscreen.height);
+      const frame = offCtx.getImageData(0, 0, offscreen.width, offscreen.height);
       const data = frame.data;
-      const w = canvas.width, h = canvas.height;
+      const w = offscreen.width, h = offscreen.height;
       const motionMask = new Uint8ClampedArray(w * h * 4);
 
       for (let i = 0; i < data.length; i += 4) {
@@ -1450,10 +1456,7 @@ async function startTrackPreview() {
       best = applySmoothing(best, 'track');
       best = applySmoothing(best, 'box');
 
-      // Render: draw frame + motion overlay + detection
-      ctx.putImageData(frame, 0, 0);
-
-      // Motion overlay: semi-transparent red
+      // Render: draw frame + motion overlay + detection on offscreen canvas
       for (let i = 0; i < morphMask.length; i += 4) {
         if (morphMask[i] === 255) {
           data[i] = Math.min(255, data[i] + 80);
@@ -1461,34 +1464,34 @@ async function startTrackPreview() {
           data[i + 2] = Math.max(0, data[i + 2] - 40);
         }
       }
-      ctx.putImageData(frame, 0, 0);
+      offCtx.putImageData(frame, 0, 0);
 
       // Draw zones
       zones.forEach(z => {
         if (!z.points || z.points.length < 3) return;
-        ctx.strokeStyle = z.color + '80'; ctx.lineWidth = 2;
-        ctx.fillStyle = z.color + '15';
-        ctx.beginPath();
-        ctx.moveTo(z.points[0].x, z.points[0].y);
-        for (let j = 1; j < z.points.length; j++) ctx.lineTo(z.points[j].x, z.points[j].y);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
+        offCtx.strokeStyle = z.color + '80'; offCtx.lineWidth = 2;
+        offCtx.fillStyle = z.color + '15';
+        offCtx.beginPath();
+        offCtx.moveTo(z.points[0].x, z.points[0].y);
+        for (let j = 1; j < z.points.length; j++) offCtx.lineTo(z.points[j].x, z.points[j].y);
+        offCtx.closePath();
+        offCtx.fill();
+        offCtx.stroke();
         const p0 = z.points[0];
-        ctx.fillStyle = z.color;
-        ctx.fillText(z.name, p0.x + 4, p0.y - 8);
+        offCtx.fillStyle = z.color;
+        offCtx.fillText(z.name, p0.x + 4, p0.y - 8);
       });
 
       if (best) {
         detectCount++;
-        ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 2;
-        ctx.strokeRect(best.minX, best.minY, best.maxX - best.minX, best.maxY - best.minY);
-        ctx.fillStyle = '#FFD700';
-        ctx.beginPath(); ctx.arc(best.cx, best.cy, 6, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = 'white';
-        ctx.font = 'bold 13px sans-serif';
+        offCtx.strokeStyle = '#FFD700'; offCtx.lineWidth = 2;
+        offCtx.strokeRect(best.minX, best.minY, best.maxX - best.minX, best.maxY - best.minY);
+        offCtx.fillStyle = '#FFD700';
+        offCtx.beginPath(); offCtx.arc(best.cx, best.cy, 6, 0, Math.PI * 2); offCtx.fill();
+        offCtx.fillStyle = 'white';
+        offCtx.font = 'bold 13px sans-serif';
         const label = `对象: ${best.count} px²`;
-        ctx.fillText(label, best.minX, best.minY - 6);
+        offCtx.fillText(label, best.minX, best.minY - 6);
         document.getElementById('camTrackStatus').textContent =
           `✅ 检测到动物 | 质心(${best.cx.toFixed(0)}, ${best.cy.toFixed(0)}) | 面积 ${best.count} px² | 第 ${detectCount} 帧`;
         document.getElementById('camTrackStatus').style.color = '#4CAF50';
@@ -1497,6 +1500,10 @@ async function startTrackPreview() {
           `⚠️ 未检测到动物 | 尝试调整灵敏度或确保动物在画面中 | 第 ${detectCount} 帧`;
         document.getElementById('camTrackStatus').style.color = '#FF9800';
       }
+
+      // Atomic copy: draw complete offscreen composition to visible canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(offscreen, 0, 0);
 
       prevFrame = frame;
     }, 150);
@@ -1561,13 +1568,19 @@ async function startCameraDetection() {
     let prevFrame = null;
     let inZone = {};
     let dwellTimers = {};
+    let dwellFired = {};
     let accumulateCounts = {};
+    let accumulateLastFired = {};
+    let enterDebounce = {};
+    let leaveDebounce = {};
 
     detectInterval = setInterval(() => {
       // 每帧从 DOM 读取当前参数值，确保滑块调整实时生效
       const sensitivity = parseInt(document.getElementById('camSensitivity').value);
       const brightnessThresh = parseInt(document.getElementById('camBrightnessThresh')?.value || 30);
       const algo = document.getElementById('camAlgo').value;
+      const threshLow = parseInt(document.getElementById('camThreshLow')?.value || 30);
+      const threshHigh = parseInt(document.getElementById('camThreshHigh')?.value || 220);
       const erosionIters = parseInt(document.getElementById('camContourErosion')?.value || 1);
       const dilateIters = parseInt(document.getElementById('camContourDilate')?.value || 2);
       const objSizeMin = parseInt(document.getElementById('camObjSizeMin')?.value || 100);
@@ -1590,7 +1603,7 @@ async function startCameraDetection() {
           const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
           const bgLum = 0.299 * bgData[i] + 0.587 * bgData[i + 1] + 0.114 * bgData[i + 2];
           const lumDiff = contrast === 'dark' ? (bgLum - lum) : (lum - bgLum);
-          isMotion = lumDiff > brightnessThresh;
+          isMotion = lumDiff > brightnessThresh && lum > threshLow && lum < threshHigh;
         } else if (algo === 'silhouette' && prevFrame) {
           const diff = Math.abs(data[i] - prevFrame.data[i]) + Math.abs(data[i + 1] - prevFrame.data[i + 1]) + Math.abs(data[i + 2] - prevFrame.data[i + 2]);
           isMotion = diff > sensitivity * 2;
@@ -1666,44 +1679,48 @@ async function startCameraDetection() {
         pctx.fillText(z.name, p0.x + 6, p0.y - 18);
       });
 
-      // Zone events with morph mask
+      // Zone events: center-point based judgment
       zones.forEach(z => {
         if (!z.points || z.points.length < 3) return;
-        let zoneMotion = 0;
-        const minX = Math.min(...z.points.map(p => p.x));
-        const maxX = Math.max(...z.points.map(p => p.x));
-        const minY = Math.min(...z.points.map(p => p.y));
-        const maxY = Math.max(...z.points.map(p => p.y));
-        for (let y = Math.max(0, Math.floor(minY)); y < Math.min(ah, Math.ceil(maxY)); y++) {
-          for (let x = Math.max(0, Math.floor(minX)); x < Math.min(aw, Math.ceil(maxX)); x++) {
-            if (morphMask[(y * aw + x) * 4] === 255 && pointInPolygon(x, y, z.points)) {
-              zoneMotion++;
-            }
-          }
-        }
         const had = inZone[z.id];
-        const has = zoneMotion > minArea / 50;
-        if (has && !had) {
+        const has = best && best.count > 10 && pointInPolygon(best.cx, best.cy, z.points);
+        const DEBOUNCE_FRAMES = 3;
+
+        if (has) {
+          enterDebounce[z.id] = (enterDebounce[z.id] || 0) + 1;
+          leaveDebounce[z.id] = 0;
+        } else {
+          leaveDebounce[z.id] = (leaveDebounce[z.id] || 0) + 1;
+          enterDebounce[z.id] = 0;
+        }
+
+        if (enterDebounce[z.id] >= DEBOUNCE_FRAMES && !had) {
           inZone[z.id] = true;
           dwellTimers[z.id] = Date.now();
+          dwellFired[z.id] = false;
           accumulateCounts[z.id] = (accumulateCounts[z.id] || 0) + 1;
-          logCam(`🧪 ${z.name}: 动物进入`, 'success');
+          logCam(`🧪 ${z.name}: 动物进入 (第${accumulateCounts[z.id]}次)`, 'success');
           toast(`${z.name}: 检测到动物进入`, 'info');
           fetch('/api/experiment/camera-event', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ zone: z.name, event: 'enter', ts: Date.now(), experiment_id: currentExperimentId }),
           }).catch(() => {});
-        } else if (has && had) {
-          if (dwellTimers[z.id] && (Date.now() - dwellTimers[z.id]) > ((z.events?.dwell?.seconds || 3) * 1000)) {
-            logCam(`⏱ ${z.name}: 停留超过${z.events?.dwell?.seconds || 3}秒`, 'info');
-            dwellTimers[z.id] = 0;
+        } else if (enterDebounce[z.id] >= DEBOUNCE_FRAMES && had) {
+          if (dwellTimers[z.id] && !dwellFired[z.id] && (Date.now() - dwellTimers[z.id]) > ((z.events?.dwell?.seconds || 3) * 1000)) {
+            const dwellSec = z.events?.dwell?.seconds || 3;
+            logCam(`⏱ ${z.name}: 停留超过${dwellSec}秒`, 'info');
+            dwellFired[z.id] = true;
           }
-          if (accumulateCounts[z.id] && accumulateCounts[z.id] % (z.events?.accumulate?.n || 5) === 0) {
+          const accN = z.events?.accumulate?.n || 5;
+          if (accumulateCounts[z.id] >= accN && accumulateCounts[z.id] > (accumulateLastFired[z.id] || 0)
+              && accumulateCounts[z.id] % accN === 0) {
             logCam(`🔢 ${z.name}: 累计进入${accumulateCounts[z.id]}次`, 'info');
+            accumulateLastFired[z.id] = accumulateCounts[z.id];
           }
-        } else if (!has && had) {
+        } else if (leaveDebounce[z.id] >= DEBOUNCE_FRAMES && had) {
           inZone[z.id] = false;
           dwellTimers[z.id] = 0;
+          dwellFired[z.id] = false;
           logCam(`🧪 ${z.name}: 动物离开`, 'warn');
           fetch('/api/experiment/camera-event', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1715,9 +1732,13 @@ async function startCameraDetection() {
       prevFrame = frame;
     }, 200);
 
-    const algoLabel = algo === 'bgsub' ? '背景差分' : algo === 'graythresh' ? '灰度阈值' : '动态剪影';
+    const algoStatus = document.getElementById('camAlgo').value;
+    const algoLabel = algoStatus === 'bgsub' ? '背景差分' : algoStatus === 'graythresh' ? '灰度阈值' : '动态剪影';
+    const sensStatus = parseInt(document.getElementById('camSensitivity').value);
+    const sizeMinStatus = parseInt(document.getElementById('camObjSizeMin')?.value || 100);
+    const sizeMaxStatus = parseInt(document.getElementById('camObjSizeMax')?.value || 5000);
     document.getElementById('cameraDetectStatus').textContent =
-      `✅ 检测运行中 | ${algoLabel} | ${contrast === 'dark' ? '比背景深的动物' : '比背景浅的动物'} | 灵敏度 ${sensitivity} | 对象面积 ${objSizeMin}-${objSizeMax}`;
+      `✅ 检测运行中 | ${algoLabel} | ${contrast === 'dark' ? '比背景深的动物' : '比背景浅的动物'} | 灵敏度 ${sensStatus} | 对象面积 ${sizeMinStatus}-${sizeMaxStatus}`;
   } catch (e) {
     toast('检测启动失败: ' + e.message, 'error');
     document.getElementById('btnStartDetection').disabled = false;
