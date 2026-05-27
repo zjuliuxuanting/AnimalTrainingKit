@@ -4,10 +4,10 @@
 启动方式：
   pip install fastapi uvicorn websockets
   python server.py
-  浏览器打开 http://localhost:8001
+  浏览器打开 http://localhost:8000
 
 版本号：v1.1.0（2026-05-19 UX 修复后）
-端口：默认 8001（开发期）。正式交付前切回 8000。
+端口：默认 8000（G2 阶段收尾统一）
 """
 
 from __future__ import annotations
@@ -175,6 +175,8 @@ async def api_start_mock(data: dict = None, count: int = 10, subject_id: str = "
         notes = data.get("notes", notes)
         max_duration_min = data.get("max_duration_min", max_duration_min)
         experiment_id = data.get("experiment_id", experiment_id)
+    use_camera_source = data.get("use_camera_source", False) if data else False
+    camera_index = data.get("camera_index", 0) if data else 0
     if count < 1 and max_duration_min < 1:
         raise HTTPException(400, "触发次数和运行时间至少有一个必须大于 0")
     async with _mutex:
@@ -195,7 +197,17 @@ async def api_start_mock(data: dict = None, count: int = 10, subject_id: str = "
         }, ensure_ascii=False))
 
         b = SignalBus()
-        b.register(MockSignalSource("mock:0", event_interval_ms=1500))
+        if use_camera_source:
+            from ui.camera import CameraSource, MotionConfig
+            cam = CameraSource(
+                source_id="camera:0",
+                camera_index=camera_index,
+                fps=15,
+                motion=MotionConfig(enabled=True, threshold=25, min_area=500),
+            )
+            b.register(cam)
+        else:
+            b.register(MockSignalSource("mock:0", event_interval_ms=1500))
         b.register(TimerSource("timer:0", tick_interval_ms=1000))
 
         e = Engine()
@@ -203,7 +215,7 @@ async def api_start_mock(data: dict = None, count: int = 10, subject_id: str = "
         def _on_signal(sig):
             event_store.append_event(
                 session_id=s.id,
-                event_type="manual_trigger",
+                event_type=f"{sig.source_type.value}_{sig.signal_id.split(':')[-1]}" if sig.source_type.value != "mock" else "manual_trigger",
                 ts_ms=sig.ts_ms,
                 signal_id=f"{sig.source_id}:{sig.signal_id}",
                 raw_payload={"value": sig.value, "data": sig.data},
@@ -225,7 +237,6 @@ async def api_start_mock(data: dict = None, count: int = 10, subject_id: str = "
                 max_events = count if count > 0 else float('inf')
                 while time.time() < deadline:
                     await asyncio.sleep(0.1)
-                    # 先到先停：触发次数达到或运行时间到，谁先到就停谁
                     event_count = len(event_store.get_events(s.id))
                     if event_count >= max_events:
                         logger.info(f"达到最大触发次数 {int(max_events)}，停止")
@@ -255,15 +266,18 @@ async def api_start_mock(data: dict = None, count: int = 10, subject_id: str = "
 
 @app.post("/api/experiment/stop")
 async def api_stop():
-    global engine, bus, _experiment_active
+    global engine, bus, session, _experiment_active
     _experiment_active = False
     if engine:
-        async def _stop():
-            await engine.stop()
-            if bus:
-                await bus.stop_all()
-        asyncio.create_task(_stop())
-    return {"status": "stopping"}
+        await engine.stop()
+    if session:
+        session.stop()
+    if bus:
+        try:
+            await bus.stop_all()
+        except Exception:
+            pass
+    return {"status": "stopped", "session_state": session.state.value if session else "none"}
 
 
 @app.get("/api/experiment/state")
@@ -302,7 +316,7 @@ async def api_session_export(session_id: str):
         except Exception:
             pass
     structured = processor.to_structured(processor.process(raw), session_id=session_id, subject_id=subject_id, session_name=session_name)
-    csv_path = export_session_csv(structured, session_id, os.path.join(PROJECT_ROOT, "data"), subject_id=subject_id, session_name=session_name)
+    csv_path = export_session_csv(structured, session_id, os.path.join(PROJECT_ROOT, "data_store"), subject_id=subject_id, session_name=session_name)
     return {"csv_path": csv_path, "count": len(structured)}
 
 
@@ -362,6 +376,8 @@ async def api_run_flow(data: dict):
     duration_s = data.get("duration", 30)
     subject_id = data.get("subject_id", "")
     exp_name = data.get("exp_name", "")
+    use_camera_source = data.get("use_camera_source", False)
+    camera_index = data.get("camera_index", 0)
     safe_name = exp_name or flow_data.get("name", "流程实验")
     if duration_s < 1 or duration_s > 86400:
         raise HTTPException(400, "运行时长需在 1~86400 秒之间")
@@ -390,7 +406,17 @@ async def api_run_flow(data: dict):
         e.set_on_engine_event(lambda kind, data: _on_engine_evt(kind, data, s))
 
         b = SignalBus()
-        b.register(MockSignalSource("mock:0", event_interval_ms=1500))
+        if use_camera_source:
+            from ui.camera import CameraSource, MotionConfig
+            cam = CameraSource(
+                source_id="camera:0",
+                camera_index=camera_index,
+                fps=15,
+                motion=MotionConfig(enabled=True, threshold=25, min_area=500),
+            )
+            b.register(cam)
+        else:
+            b.register(MockSignalSource("mock:0", event_interval_ms=1500))
         b.register(TimerSource("timer:0", tick_interval_ms=1000))
 
         collected_signals = []
@@ -509,8 +535,6 @@ async def api_camera_event(data: dict):
             signal_id=signal_id,
             raw_payload={"zone": zone, "event": event, "experiment_id": experiment_id},
         )
-        event_store._db.execute("UPDATE sessions SET event_count = event_count + 1 WHERE id = ?", (session_key,))
-        event_store._db.commit()
     if engine and engine.is_running and _loop:
         from protocol.signal_source import SignalEvent, SourceType
         sig = SignalEvent(
@@ -715,6 +739,47 @@ async def api_camera_load_config(experiment_id: str = None):
     return {"config": _load_camera_config(experiment_id)}
 
 
+@app.get("/api/camera/config/exists")
+async def api_camera_config_exists(experiment_id: str = None):
+    path = _get_camera_config_path(experiment_id)
+    return {"exists": os.path.isfile(path), "path": path}
+
+
+@app.get("/api/camera/config/view")
+async def api_camera_config_view(experiment_id: str = None):
+    path = _get_camera_config_path(experiment_id)
+    if not os.path.isfile(path):
+        raise HTTPException(404, "配置文件不存在，请先保存配置")
+    return FileResponse(path, media_type="application/json", content_disposition_type="inline")
+
+
+def _get_background_path(experiment_id: str = None) -> str:
+    config_path = _get_camera_config_path(experiment_id)
+    return os.path.join(os.path.dirname(config_path), "background.png")
+
+
+@app.post("/api/camera/background")
+async def api_camera_save_background(data: dict):
+    experiment_id = data.get("experiment_id", None)
+    image_b64 = data.get("image", "")
+    if not image_b64:
+        raise HTTPException(400, "缺少图片数据")
+    import base64
+    path = _get_background_path(experiment_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(base64.b64decode(image_b64.split(",")[-1] if "," in image_b64 else image_b64))
+    return {"ok": True, "path": path}
+
+
+@app.get("/api/camera/background")
+async def api_camera_load_background(experiment_id: str = None):
+    path = _get_background_path(experiment_id)
+    if not os.path.isfile(path):
+        raise HTTPException(404, "暂无保存的背景图片")
+    return FileResponse(path, media_type="image/png")
+
+
 @app.get("/api/sources")
 async def api_list_sources(experiment_id: str = None):
     """返回所有可用信号源列表（供流程编辑器 TRIGGER 节点下拉）"""
@@ -738,9 +803,10 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="行为学训练盒上位机")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"监听端口（默认 {DEFAULT_PORT}）")
+    parser.add_argument("--host", type=str, default="127.0.0.1", help="监听地址（默认 127.0.0.1）")
     args = parser.parse_args()
 
-    config = uvicorn.Config(app, host="0.0.0.0", port=args.port, log_level="info")
+    config = uvicorn.Config(app, host=args.host, port=args.port, log_level="info")
     server = uvicorn.Server(config)
 
     def _shutdown(signum, frame):

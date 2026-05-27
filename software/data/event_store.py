@@ -65,6 +65,10 @@ class EventStore:
                 smoothing_flag,
             ),
         )
+        self._db.execute(
+            "UPDATE sessions SET event_count = event_count + 1 WHERE id = ?",
+            (session_id,),
+        )
         self._db.commit()
 
     def append_batch(self, events: List[Dict[str, Any]]):
@@ -110,6 +114,13 @@ class EventStore:
 
     def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         cursor = self._db.execute("SELECT * FROM sessions WHERE id = ?", (session_id,))
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        # 前缀匹配（兼容 truncation 场景）
+        cursor = self._db.execute(
+            "SELECT * FROM sessions WHERE id LIKE ? || '%' LIMIT 1", (session_id,)
+        )
         row = cursor.fetchone()
         return dict(row) if row else None
 

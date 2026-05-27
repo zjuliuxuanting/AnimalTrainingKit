@@ -178,7 +178,7 @@ class MainWindow(QMainWindow):
         self._engine: Optional[Engine] = None
         self._camera_source: Optional[CameraSource] = None
 
-        db_path = os.path.join(PROJECT_ROOT, "data", "behavior_box.db")
+        db_path = os.path.join(PROJECT_ROOT, "data_store", "behavior_box.db")
         self._db = Database(db_path)
         self._db.open()
         self._event_store = EventStore(self._db)

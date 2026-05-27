@@ -34,9 +34,6 @@ function connectWS() {
       log(`实验完成: ${msg.event_count} 条数据已记录`, 'success');
       toast(`实验完成，${msg.event_count} 条数据已记录`, 'success');
       document.getElementById('btnStop').disabled = true;
-      if (typeof stopCameraDetection === 'function') {
-        stopCameraDetection();
-      }
       renderExperimentList();
     }
   };

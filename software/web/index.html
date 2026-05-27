@@ -287,6 +287,9 @@
 
   <div class="card camera-step" id="camStep1">
     <h3>② 背景建模</h3>
+    <div id="bgConfiguredBadge" style="display:none;background:#E8F5E9;color:#2E7D32;padding:10px 16px;border-radius:8px;border:2px solid #4CAF50;margin-bottom:12px;text-align:center;font-size:14px;font-weight:500">
+      ✅ 背景已配置 &nbsp;<span style="font-size:12px;color:#666;font-weight:400">继续到下一步查看背景详情</span>
+    </div>
     <p style="color:var(--text-secondary);font-size:13px;margin-bottom:8px">软件会自动建立参考背景。选择一种方式：</p>
     <div style="display:flex;gap:8px;margin-bottom:12px">
       <button class="btn btn-sm btn-primary" id="bgMethodAuto" onclick="setBgMethod('auto')" style="flex:1">🔄 自动采集（30帧取中值）</button>
@@ -392,11 +395,11 @@
       </div>
       <div class="form-group" style="grid-column:1/-1">
         <label>动物颜色对比（相对背景）</label>
-        <div style="display:flex;gap:8px;margin-top:2px">
-          <label style="display:flex;align-items:center;gap:4px;padding:4px 12px;border:2px solid var(--border);border-radius:8px;cursor:pointer;font-size:13px" id="contrastDark" onclick="setContrast('dark')">
+        <div style="display:flex;gap:8px;margin-top:2px;flex-wrap:wrap">
+          <label style="display:flex;align-items:center;gap:4px;padding:4px 12px;border:2px solid var(--border);border-radius:8px;cursor:pointer;font-size:13px;white-space:nowrap;flex-shrink:0" id="contrastDark" onclick="setContrast('dark')">
             <input type="radio" name="contrast" value="dark" checked> ⬛ 比背景深
           </label>
-          <label style="display:flex;align-items:center;gap:4px;padding:4px 12px;border:2px solid var(--border);border-radius:8px;cursor:pointer;font-size:13px" id="contrastLight" onclick="setContrast('light')">
+          <label style="display:flex;align-items:center;gap:4px;padding:4px 12px;border:2px solid var(--border);border-radius:8px;cursor:pointer;font-size:13px;white-space:nowrap;flex-shrink:0" id="contrastLight" onclick="setContrast('light')">
             <input type="radio" name="contrast" value="light"> ⬜ 比背景浅
           </label>
         </div>
@@ -415,7 +418,7 @@
         <p style="font-size:12px;font-weight:500;margin-bottom:4px">平滑处理</p>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
           <div class="form-group">
-            <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" id="camTrackSmooth" onchange="onSmoothChange()"> 轨迹平滑</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px;white-space:nowrap"><input type="checkbox" id="camTrackSmooth" onchange="onSmoothChange()"> 轨迹平滑</label>
             <div style="display:flex;align-items:center;gap:4px;margin-top:2px">
               <span style="font-size:11px;color:var(--text-secondary);min-width:16px">强度</span>
               <input type="range" id="camTrackSmoothStrength" min="1" max="10" value="3" style="flex:1" oninput="document.getElementById('camTrackSmoothStrengthVal').textContent=this.value" disabled>
@@ -423,7 +426,7 @@
             </div>
           </div>
           <div class="form-group">
-            <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" id="camBoxSmooth" onchange="onSmoothChange()"> 检测框平滑</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px;white-space:nowrap"><input type="checkbox" id="camBoxSmooth" onchange="onSmoothChange()"> 检测框平滑</label>
             <div style="display:flex;align-items:center;gap:4px;margin-top:2px">
               <span style="font-size:11px;color:var(--text-secondary);min-width:16px">强度</span>
               <input type="range" id="camBoxSmoothStrength" min="1" max="10" value="3" style="flex:1" oninput="document.getElementById('camBoxSmoothStrengthVal').textContent=this.value" disabled>
@@ -451,9 +454,11 @@
     <div style="text-align:center;margin-bottom:12px">
       <canvas id="camDetectPreview" style="max-width:100%;border-radius:8px;background:#000;max-height:300px;display:none"></canvas>
     </div>
-    <div class="flex" style="justify-content:center;margin-top:12px">
-      <button class="btn btn-success" onclick="startCameraDetection()" id="btnStartDetection">▶ 开始检测</button>
-      <button class="btn btn-danger" onclick="stopCameraDetection()" id="btnStopDetection" disabled>⏹ 停止检测</button>
+    <div class="flex" style="justify-content:center;margin-top:12px;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-sm btn-primary" onclick="saveCameraConfigManual()" id="btnSaveConfig">💾 保存配置</button>
+      <button class="btn btn-sm" onclick="viewCameraConfig()" id="btnViewConfig" disabled title="请先保存配置后再查看">📄 查看配置文件</button>
+      <button class="btn btn-sm btn-success" onclick="startCameraDetection()" id="btnStartDetection">▶ 开始检测</button>
+      <button class="btn btn-sm btn-danger" onclick="stopCameraDetection()" id="btnStopDetection" disabled>⏹ 停止检测</button>
     </div>
     <div id="cameraDetectStatus" style="margin-top:8px;color:var(--text-secondary);font-size:12px;text-align:center"></div>
   </div>

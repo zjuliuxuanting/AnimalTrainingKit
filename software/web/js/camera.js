@@ -93,15 +93,14 @@ function drawRulerCanvas() {
       ctx.strokeStyle = '#FF9800'; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.moveTo(rulerPoints[0].x, rulerPoints[0].y);
       ctx.lineTo(rulerPoints[1].x, rulerPoints[1].y); ctx.stroke();
-      if (rulerPixelsPerCm) {
-        const dx = rulerPoints[1].x - rulerPoints[0].x;
-        const dy = rulerPoints[1].y - rulerPoints[0].y;
-        const midX = (rulerPoints[0].x + rulerPoints[1].x) / 2;
-        const midY = (rulerPoints[0].y + rulerPoints[1].y) / 2;
-        ctx.fillStyle = '#FF9800';
-        ctx.font = 'bold 12px sans-serif';
-        ctx.fillText(`${(Math.sqrt(dx*dx+dy*dy)/rulerPixelsPerCm).toFixed(1)} cm`, midX, midY - 8);
-      }
+      const dx = rulerPoints[1].x - rulerPoints[0].x;
+      const dy = rulerPoints[1].y - rulerPoints[0].y;
+      const pixelDist = Math.sqrt(dx * dx + dy * dy);
+      const midX = (rulerPoints[0].x + rulerPoints[1].x) / 2;
+      const midY = (rulerPoints[0].y + rulerPoints[1].y) / 2;
+      ctx.fillStyle = '#FF9800';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.fillText(`${pixelDist.toFixed(0)} px`, midX, midY - 8);
     }
   }
 }
@@ -139,15 +138,20 @@ function goToStep(step) {
 
   if (oldStep === 1 && step !== 1) releaseBgCamera();
   if (step === 1 && oldStep !== 1) {
+    updateBgConfiguredBadge();
     if (bgMethod === 'auto') {
       startBgPreview();
+    } else if (bgMethod === 'fill') {
+      startFillBox();
     }
   }
   if (step === 2) drawRulerCanvas();
   if (step === 3) drawZones();
+  if (step === 4) renderEventRules();
   if (step === 5 && oldStep !== 5) startTrackStepCamera();
   if (oldStep === 5 && step !== 5 && step !== 6) releaseTrackCamera();
   if (oldStep === 5 && step === 6) { /* keep stream for detection */ }
+  if (step === 6) updateViewConfigButton();
 
   if (oldStep === 6 && step !== 6 && detectInterval) {
     _detectionPaused = true;
@@ -175,7 +179,7 @@ function cameraNextStep() {
   if (cameraStep === 1 && !bgImageData) { toast('请先完成背景建模', 'warn'); return; }
   if (cameraStep === 2 && !bgImageData) { toast('请先完成背景建模', 'warn'); return; }
   if (cameraStep === 3 && zones.length === 0) { toast('请先绘制至少一个检测区域', 'warn'); return; }
-  if (cameraStep === 4 && (!Array.isArray(eventRules) || eventRules.length === 0)) { toast('请先定义至少一条区域事件规则', 'warn'); return; }
+  if (cameraStep === 4 && (!Array.isArray(eventRules) || eventRules.length === 0)) { toast('建议先定义至少一条事件规则', 'warn'); return; }
   if (cameraStep === 5 && !bgImageData) { toast('请先完成背景建模', 'warn'); return; }
   if (cameraStep < 6) goToStep(cameraStep + 1);
 }
@@ -195,8 +199,8 @@ async function refreshCameraList() {
     }
     const cams = devices.filter(d => d.kind === 'videoinput');
     if (cams.length === 0) {
-      sel.innerHTML = '<option value="">未检测到摄像头</option>';
-      document.getElementById('camSelectStatus').textContent = '❌ 未检测到摄像头';
+      sel.innerHTML = '<option value="">暂未检测到可用摄像头</option>';
+      document.getElementById('camSelectStatus').textContent = '💡 暂未检测到可用摄像头';
     } else {
       let html = '';
       cams.forEach((cam, i) => {
@@ -206,8 +210,8 @@ async function refreshCameraList() {
       document.getElementById('camSelectStatus').textContent = `✅ 检测到 ${cams.length} 个摄像头`;
     }
   } catch (e) {
-    sel.innerHTML = '<option value="">无法检测摄像头</option>';
-    document.getElementById('camSelectStatus').textContent = '⚠️ 请允许摄像头权限后重试';
+    sel.innerHTML = '<option value="">未能检测摄像头，请检查连接</option>';
+    document.getElementById('camSelectStatus').textContent = '💡 请授予摄像头权限后重试';
   }
 }
 
@@ -217,10 +221,18 @@ function setContrast(val) {
   document.getElementById('contrastLight').style.borderColor = val === 'light' ? '#FF9800' : 'var(--border)';
 }
 
-function setBgMethod(method) {
-  if (method === 'fill' && bgMethod === 'auto') {
-    releaseBgCamera();
+function updateBgConfiguredBadge() {
+  const badge = document.getElementById('bgConfiguredBadge');
+  if (!badge) return;
+  if (bgImageData) {
+    badge.style.display = 'block';
+  } else {
+    badge.style.display = 'none';
   }
+}
+
+function setBgMethod(method) {
+  const oldMethod = bgMethod;
   bgMethod = method;
   document.getElementById('bgMethodAuto').className = 'btn btn-sm' + (method === 'auto' ? ' btn-primary' : '');
   document.getElementById('bgMethodFill').className = 'btn btn-sm' + (method === 'fill' ? ' btn-primary' : '');
@@ -228,6 +240,13 @@ function setBgMethod(method) {
   document.getElementById('bgFillArea').style.display = method === 'fill' ? 'block' : 'none';
   if (method === 'auto' && (!cameraStream || !cameraStream.active)) {
     startBgPreview();
+  }
+  if (method === 'fill' && oldMethod !== 'fill') {
+    if (cameraStream && cameraStream.active) {
+      _setupFillFromStream(cameraStream);
+    } else {
+      startFillBox();
+    }
   }
 }
 
@@ -263,8 +282,8 @@ function startBgPreview() {
     document.getElementById('camBgProgress').textContent = '摄像头已开启，点击"开始采集背景"采集30帧';
     document.getElementById('camBgProgress').style.color = 'var(--text-secondary)';
   }).catch(e => {
-    toast('摄像头开启失败: ' + e.message, 'error');
-    document.getElementById('camBgProgress').textContent = '❌ 摄像头开启失败';
+    toast('摄像头暂未就绪，可以重试', 'error');
+    document.getElementById('camBgProgress').textContent = '💡 摄像头暂未就绪，请重试';
   });
 }
 
@@ -319,15 +338,16 @@ async function startAutoBackground() {
     bgImageData = new ImageData(result, w, h);
     ctx.putImageData(bgImageData, 0, 0);
     drawZones();
-    document.getElementById('camBgProgress').textContent = '✅ 背景已生成（30帧中值）';
-    document.getElementById('camBgProgress').style.color = '#4CAF50';
-    toast('背景已生成', 'success');
-    document.getElementById('btnCaptureBg').disabled = false;
-    releaseBgCamera();
-    cameraNextStep();
+    saveBackgroundImage();
+     document.getElementById('camBgProgress').textContent = '✅ 背景已生成（30帧中值）';
+     document.getElementById('camBgProgress').style.color = '#4CAF50';
+     toast('背景已生成', 'success');
+     document.getElementById('btnCaptureBg').disabled = false;
+     releaseBgCamera();
+     updateBgConfiguredBadge();
   } catch (e) {
-    toast('背景采集失败: ' + e.message, 'error');
-    document.getElementById('camBgProgress').textContent = '❌ 采集失败';
+    toast('背景采集未成功，请重试', 'error');
+    document.getElementById('camBgProgress').textContent = '💡 采集未成功，可以重试';
     document.getElementById('btnCaptureBg').disabled = false;
   }
 }
@@ -384,11 +404,37 @@ function startFillBox() {
       cameraStream = stream;
       setupFillVideo(stream);
     }).catch(e => {
-      toast('摄像头开启失败: ' + e.message, 'error');
+      toast('摄像头暂未就绪，可以重试', 'error');
       return;
     });
   }
   btn.textContent = '📷 关闭预览';
+}
+
+function _setupFillFromStream(stream) {
+  const fillCanvas = document.getElementById('camFillCanvas');
+  const fillVideo = document.getElementById('camFillVideo');
+  const fillStatus = document.getElementById('camFillStatus');
+  const btn = document.getElementById('btnToggleFillPreview');
+
+  fillVideo.srcObject = stream;
+  fillVideo.onloadedmetadata = () => {
+    fillCanvas.width = fillVideo.videoWidth || 640;
+    fillCanvas.height = fillVideo.videoHeight || 480;
+    fillVideo.play().catch(() => {});
+    drawFillFrame();
+    if (fillStatus) fillStatus.textContent = '点击画面放置顶点，用多边形圈出动物位置。双击最后一个顶点闭合多边形';
+  };
+  if (fillVideo.readyState >= 2) {
+    fillCanvas.width = fillVideo.videoWidth || 640;
+    fillCanvas.height = fillVideo.videoHeight || 480;
+    fillVideo.play().catch(() => {});
+    drawFillFrame();
+    if (fillStatus) fillStatus.textContent = '点击画面放置顶点，用多边形圈出动物位置。双击最后一个顶点闭合多边形';
+  }
+  if (btn) btn.textContent = '📷 关闭预览';
+  bgFillPoints = [];
+  bgFillMode = false;
 }
 
 function drawFillFrame() {
@@ -484,16 +530,15 @@ document.getElementById('camFillCanvas').addEventListener('dblclick', (e) => {
 
 function closeFillPolygon() {
   if (bgFillPoints.length < 3) {
-    toast('至少需要3个顶点才能闭合多边形', 'warn');
+    toast('需要至少3个顶点，继续添加吧', 'warn');
     return;
   }
-  if (!confirm('确定闭合此多边形吗？闭合后将圈出动物位置')) return;
   bgFillMode = true;
   document.getElementById('camFillStatus').textContent = '✅ 多边形已闭合，点击"生成背景"完成';
 }
 
 function applyFillBg() {
-  if (bgFillPoints.length < 3) { toast('请先用多边形圈出动物位置（至少3个顶点）', 'warn'); return; }
+  if (bgFillPoints.length < 3) { toast('请用多边形圈出动物位置（需要至少3个顶点）', 'warn'); return; }
 
   const canvas = document.getElementById('camFillCanvas');
   const ctx = canvas.getContext('2d');
@@ -588,11 +633,12 @@ function applyFillBg() {
   const mainCtx = mainCanvas.getContext('2d');
   mainCtx.putImageData(bgImageData, 0, 0);
   drawZones();
+  saveBackgroundImage();
   document.getElementById('camFillStatus').textContent = '✅ 背景已生成（分层扩张填充）';
   document.getElementById('camFillStatus').style.color = '#4CAF50';
   toast('背景已生成', 'success');
   releaseBgCamera();
-  cameraNextStep();
+  updateBgConfiguredBadge();
 }
 
 function canvasPos(e, canvas) {
@@ -658,14 +704,14 @@ function removeLastZone() {
 function deleteZoneByIndex(idx) {
   if (idx < 0 || idx >= zones.length) return;
   const name = zones[idx].name;
-  if (!confirm(`确定删除区域「${name}」吗？`)) return;
+  if (!confirm(`确认移除区域「${name}」？`)) return;
   zones.splice(idx, 1);
   if (Array.isArray(eventRules)) {
     eventRules = eventRules.filter(r => r.zone !== name);
   }
   zoneDrawMode = false; zonePoints = [];
   drawZones(); updateZoneList();
-  toast('已删除区域「' + name + '」', 'warn');
+  toast('已移除区域「' + name + '」', 'warn');
 }
 
 function renameZone(idx, newName) {
@@ -681,11 +727,11 @@ function renameZone(idx, newName) {
 
 function clearAllZones() {
   if (zones.length === 0) return;
-  if (!confirm('确定清空全部 ' + zones.length + ' 个检测区域吗？')) return;
+  if (!confirm('确认清除全部 ' + zones.length + ' 个区域？')) return;
   zones = [];
   zoneDrawMode = false; zonePoints = [];
   drawZones(); updateZoneList();
-  toast('已清空全部区域', 'warn');
+  toast('已清除全部区域', 'warn');
 }
 
 function drawZones() {
@@ -708,17 +754,18 @@ function drawZones() {
     ctx.stroke();
 
     const p0 = z.points[0];
-    ctx.fillStyle = z.color;
-    const labelW = ctx.measureText(z.name).width + 12;
-    ctx.fillRect(p0.x, p0.y - 22, labelW, 22);
-    ctx.fillStyle = 'white';
-    ctx.fillText(z.name, p0.x + 6, p0.y - 18);
 
     const pxArea = polygonArea(z.points);
     const areaStr = areaDisplay(pxArea);
     ctx.fillStyle = z.color;
     ctx.font = '11px sans-serif';
-    ctx.fillText(areaStr, p0.x + 6, p0.y - 5);
+    ctx.fillText(areaStr, p0.x + 6, p0.y - 35);
+
+    ctx.fillStyle = z.color;
+    const labelW = ctx.measureText(z.name).width + 12;
+    ctx.fillRect(p0.x, p0.y - 20, labelW, 20);
+    ctx.fillStyle = 'white';
+    ctx.fillText(z.name, p0.x + 6, p0.y - 16);
 
     if (dragZoneIdx >= 0 && zones[dragZoneIdx] === z) {
       z.points.forEach((p, i) => {
@@ -746,7 +793,7 @@ function drawZones() {
 }
 
 function closePolygon() {
-  if (zonePoints.length < 3) { toast('至少需要3个顶点', 'warn'); return; }
+  if (zonePoints.length < 3) { toast('至少需要3个顶点，请继续添加', 'warn'); return; }
   const idx = zones.length;
   zones.push({
     id: 'zone_' + idx,
@@ -835,10 +882,25 @@ function renderEventRules() {
     { value: 'record', label: '仅记录不触发' },
   ];
 
-  let html = '<div style="margin-bottom:8px;font-size:12px;color:var(--text-secondary)">定义事件规则，每条规则由一个区域 + 事件类型 + 用途组成：</div>';
+  let html = '<div style="margin-bottom:8px;font-size:12px;color:var(--text-secondary)">定义事件规则，每条规则由一个名称 + 区域 + 事件类型 + 用途组成。名称默认可修改：</div>';
 
   eventRules.forEach((r, i) => {
+    const conflicts = checkDuplicateName(r.name, i);
+    const dupStyle = conflicts.length > 0
+      ? 'border-color:#F44336;background:#FFF5F5'
+      : 'border:1px solid var(--border)';
+    const dupTitle = conflicts.length > 0
+      ? `⚠ 重名冲突！已存在同名事件: ${conflicts.map(c => c.name).join(', ')}`
+      : '事件名称';
+    const dupIcon = conflicts.length > 0
+      ? '<span style="color:#F44336;font-size:14px;flex-shrink:0" title="' + dupTitle + '">⚠️</span>'
+      : '';
+
     html += `<div class="card" style="padding:10px;margin:6px 0;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      ${dupIcon}
+      <input value="${(r.name || '').replace(/"/g, '&quot;')}" placeholder="事件名称" onchange="updateEventRule(${i},'name',this.value)"
+        style="flex:1;min-width:100px;padding:4px 8px;border-radius:4px;font-size:12px;${dupStyle}" title="${dupTitle}">
+      <span style="color:var(--text-secondary)">|</span>
       <select onchange="updateEventRule(${i},'zone',this.value)" style="flex:1;min-width:80px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px">`;
     zones.forEach(z => {
       const sel = z.name === r.zone ? ' selected' : '';
@@ -853,7 +915,7 @@ function renderEventRules() {
     });
     html += `</select>
       <span style="color:var(--text-secondary)">→</span>
-      <select onchange="updateEventRule(${i},'role',this.value)" style="flex:0;min-width:90px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px">`;
+      <select onchange="updateEventRule(${i},'role',this.value)" style="flex:1;min-width:110px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px">`;
     roleOpts.forEach(ro => {
       const sel = ro.value === (r.role || 'trigger') ? ' selected' : '';
       html += `<option value="${ro.value}"${sel}>${ro.label}</option>`;
@@ -873,10 +935,56 @@ function renderEventRules() {
   el.innerHTML = html;
 }
 
+function checkDuplicateName(name, excludeIndex) {
+  const conflicts = [];
+  if (!Array.isArray(eventRules)) return conflicts;
+  eventRules.forEach((r, i) => {
+    if (i !== excludeIndex && r.name === name) {
+      conflicts.push({ index: i, name: r.name, zone: r.zone, event: r.event });
+    }
+  });
+  return conflicts;
+}
+
+function defaultEventName(zone, event, n, seconds, excludeIndex) {
+  let base;
+  if (event === 'enter') base = `${zone}-进入`;
+  else if (event === 'leave') base = `${zone}-离开`;
+  else if (event === 'accumulate') base = `${zone}-累计${n || 5}次`;
+  else if (event === 'dwell') base = `${zone}-停留${seconds || 3}秒`;
+  else base = `${zone}-事件`;
+  let name = base;
+  let counter = 2;
+  while (checkDuplicateName(name, excludeIndex).length > 0) {
+    name = `${base}_${counter}`;
+    counter++;
+  }
+  return name;
+}
+
+function resolveDupName(rawName, excludeIndex) {
+  let name = rawName;
+  let counter = 2;
+  while (checkDuplicateName(name, excludeIndex).length > 0) {
+    name = `${rawName}_${counter}`;
+    counter++;
+  }
+  return name;
+}
+
+function findEventRuleName(zone, eventType) {
+  if (!Array.isArray(eventRules)) return null;
+  const rule = eventRules.find(r => r.zone === zone && r.event === eventType);
+  return rule ? rule.name : null;
+}
+
 function addEventRule() {
   if (zones.length === 0) { toast('请先在步骤④中定义检测区域', 'warn'); return; }
   if (!Array.isArray(eventRules)) eventRules = [];
-  eventRules.push({ zone: zones[0].name, event: 'enter', role: 'trigger' });
+  const zone = zones[0].name;
+  const event = 'enter';
+  const idx = eventRules.length;
+  eventRules.push({ zone, event, role: 'trigger', name: defaultEventName(zone, event, null, null, idx) });
   renderEventRules();
 }
 
@@ -893,7 +1001,63 @@ function updateEventRule(idx, field, value) {
     if (value !== 'accumulate') delete eventRules[idx].n;
     if (value !== 'dwell') delete eventRules[idx].seconds;
   }
+  if (field === 'zone' || field === 'event' || field === 'n' || field === 'seconds') {
+    eventRules[idx].name = defaultEventName(
+      eventRules[idx].zone,
+      eventRules[idx].event,
+      eventRules[idx].n,
+      eventRules[idx].seconds,
+      idx,
+    );
+  }
+  if (field === 'name') {
+    const resolved = resolveDupName(value, idx);
+    if (resolved !== value) {
+      eventRules[idx].name = resolved;
+    }
+  }
   renderEventRules();
+}
+
+async function saveBackgroundImage() {
+  if (!bgImageData) return;
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = bgImageData.width;
+    canvas.height = bgImageData.height;
+    const ctx = canvas.getContext('2d');
+    ctx.putImageData(bgImageData, 0, 0);
+    const b64 = canvas.toDataURL('image/png');
+    await fetch('/api/camera/background', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: b64, experiment_id: currentExperimentId }),
+    });
+  } catch (e) { /* best effort */ }
+}
+
+async function loadBackgroundImage() {
+  try {
+    let url = '/api/camera/background';
+    if (currentExperimentId) url += '?experiment_id=' + encodeURIComponent(currentExperimentId);
+    const resp = await fetch(url);
+    if (!resp.ok) return null;
+    const blob = await resp.blob();
+    const img = new Image();
+    return new Promise((resolve) => {
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        resolve(ctx.getImageData(0, 0, img.width, img.height));
+      };
+      img.onerror = () => resolve(null);
+      img.src = URL.createObjectURL(blob);
+    });
+  } catch (e) {
+    return null;
+  }
 }
 
 async function saveCameraConfig() {
@@ -996,6 +1160,33 @@ async function loadCameraConfig() {
   } catch (e) { /* first time */ }
 }
 
+async function saveCameraConfigManual() {
+  await saveCameraConfig();
+  toast('配置已保存', 'success');
+  updateViewConfigButton();
+}
+
+async function updateViewConfigButton() {
+   const btn = document.getElementById('btnViewConfig');
+   if (!btn) return;
+   try {
+     let url = '/api/camera/config/exists';
+     if (currentExperimentId) url += '?experiment_id=' + encodeURIComponent(currentExperimentId);
+     const resp = await fetch(url);
+     const data = await resp.json();
+     btn.disabled = !data.exists;
+     btn.title = data.exists ? '打开配置文件: ' + data.path : '请先保存配置后再查看';
+   } catch (e) {
+     btn.disabled = true;
+   }
+ }
+
+function viewCameraConfig() {
+  let url = '/api/camera/config/view';
+  if (currentExperimentId) url += '?experiment_id=' + encodeURIComponent(currentExperimentId);
+  window.open(url, '_blank');
+}
+
 function setCameraExperiment(expId, expName, cameraEnabled) {
   currentExperimentId = expId;
   currentExperimentName = expName || '';
@@ -1052,7 +1243,19 @@ function setCameraExperiment(expId, expName, cameraEnabled) {
 
   drawZones();
   updateZoneList();
-  loadCameraConfig();
+  loadCameraConfig().then(() => {
+    updateZoneList();
+    renderEventRules();
+  });
+  loadBackgroundImage().then(data => {
+    if (data) {
+      bgImageData = data;
+      const cvs = document.getElementById('camCanvas');
+      if (cvs) { cvs.width = data.width; cvs.height = data.height; }
+      drawZones();
+      updateBgConfiguredBadge();
+    }
+  });
   // Initialize pixel area slider ranges with a default 640x480 resolution
   // Actual resolution will override when a camera stream starts
   updateObjSizeRange(640, 480);
@@ -1276,7 +1479,7 @@ function startTrackStepCamera() {
       }
     }
   }).catch(e => {
-    toast('摄像头开启失败: ' + e.message, 'error');
+    toast('摄像头暂未就绪，可以重试', 'error');
   });
 }
 
@@ -1493,11 +1696,11 @@ async function startTrackPreview() {
         const label = `对象: ${best.count} px²`;
         offCtx.fillText(label, best.minX, best.minY - 6);
         document.getElementById('camTrackStatus').textContent =
-          `✅ 检测到动物 | 质心(${best.cx.toFixed(0)}, ${best.cy.toFixed(0)}) | 面积 ${best.count} px² | 第 ${detectCount} 帧`;
+          `✅ 检测到动物 | 位置(${best.cx.toFixed(0)}, ${best.cy.toFixed(0)}) | 面积 ${best.count} px² | 第 ${detectCount} 帧`;
         document.getElementById('camTrackStatus').style.color = '#4CAF50';
       } else {
         document.getElementById('camTrackStatus').textContent =
-          `⚠️ 未检测到动物 | 尝试调整灵敏度或确保动物在画面中 | 第 ${detectCount} 帧`;
+          `👀 暂未检测到动物 | 可以调整灵敏度或确保动物在画面中 | 第 ${detectCount} 帧`;
         document.getElementById('camTrackStatus').style.color = '#FF9800';
       }
 
@@ -1508,7 +1711,7 @@ async function startTrackPreview() {
       prevFrame = frame;
     }, 150);
   } catch (e) {
-    toast('预览启动失败: ' + e.message, 'error');
+    toast('预览暂未启动，请重试', 'error');
     document.getElementById('btnStartTrackPreview').disabled = false;
     document.getElementById('btnStopTrackPreview').disabled = true;
   }
@@ -1529,12 +1732,25 @@ async function startCameraDetection() {
   if (zones.length === 0) { toast('请先添加至少一个检测区域', 'warn'); return; }
   if (!bgImageData) { toast('请先完成背景建模', 'warn'); return; }
 
-  saveCameraConfig();
-
   document.getElementById('btnStartDetection').disabled = true;
   document.getElementById('btnStopDetection').disabled = false;
   document.getElementById('camDetectionLog').style.display = 'block';
-  document.getElementById('camEventLog').innerHTML = '检测开始...\n';
+  const eventTypeLabels = { enter: '进入区域', leave: '离开区域', accumulate: '累计进入N次', dwell: '停留超过X秒' };
+  const roleLabels = { trigger: '作为触发信号', record: '仅记录' };
+  let initLog = '══════ 检测已启动 ══════\n';
+  if (Array.isArray(eventRules) && eventRules.length > 0) {
+    initLog += `📋 已定义 ${eventRules.length} 条事件规则:\n`;
+    eventRules.forEach((r, i) => {
+      const etLabel = eventTypeLabels[r.event] || r.event;
+      const rLabel = roleLabels[r.role] || r.role;
+      const param = r.event === 'accumulate' ? `(每${r.n || 5}次)` : r.event === 'dwell' ? `(${r.seconds || 3}秒)` : '';
+      initLog += `  ${i + 1}. ${r.name || '未命名'} | 区域: ${r.zone} | 触发: ${etLabel}${param} | 用途: ${rLabel}\n`;
+    });
+    initLog += '──────────────────────────\n';
+  } else {
+    initLog += '💡 未配置事件规则，将自动记录进入和离开事件\n──────────────────────────\n';
+  }
+  document.getElementById('camEventLog').innerHTML = initLog;
   toast('摄像头检测已启动', 'success');
 
   const deviceId = document.getElementById('camSelect').value;
@@ -1699,32 +1915,51 @@ async function startCameraDetection() {
           dwellTimers[z.id] = Date.now();
           dwellFired[z.id] = false;
           accumulateCounts[z.id] = (accumulateCounts[z.id] || 0) + 1;
-          logCam(`🧪 ${z.name}: 动物进入 (第${accumulateCounts[z.id]}次)`, 'success');
+          const posInfo = best ? `位置(${best.cx.toFixed(0)},${best.cy.toFixed(0)})` : '位置未知';
+          logCam(`🧪 [进入] ${z.name} | 触发: 动物${posInfo}进入区域 | 来源: 摄像头检测 | 第${accumulateCounts[z.id]}次进入`, 'success');
+          const enterRule = findEventRuleName(z.name, 'enter');
+          if (enterRule) logCam(`📌 [触发规则] 已触发「${enterRule}」`, '');
           toast(`${z.name}: 检测到动物进入`, 'info');
           fetch('/api/experiment/camera-event', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ zone: z.name, event: 'enter', ts: Date.now(), experiment_id: currentExperimentId }),
+            body: JSON.stringify({ zone: z.name, event: 'enter', ts: Date.now(), experiment_id: currentExperimentId, pos_x: best ? best.cx : null, pos_y: best ? best.cy : null }),
           }).catch(() => {});
         } else if (enterDebounce[z.id] >= DEBOUNCE_FRAMES && had) {
           if (dwellTimers[z.id] && !dwellFired[z.id] && (Date.now() - dwellTimers[z.id]) > ((z.events?.dwell?.seconds || 3) * 1000)) {
             const dwellSec = z.events?.dwell?.seconds || 3;
-            logCam(`⏱ ${z.name}: 停留超过${dwellSec}秒`, 'info');
+            const posInfo = best ? `位置(${best.cx.toFixed(0)},${best.cy.toFixed(0)})` : '';
+            logCam(`⏱ [停留] ${z.name} | 触发: 停留超过${dwellSec}秒${posInfo ? ' ' + posInfo : ''} | 来源: 摄像头检测`, 'info');
+            const dwellRule = findEventRuleName(z.name, 'dwell');
+            if (dwellRule) logCam(`📌 [触发规则] 已触发「${dwellRule}」`, '');
             dwellFired[z.id] = true;
+            fetch('/api/experiment/camera-event', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ zone: z.name, event: 'dwell', seconds: dwellSec, ts: Date.now(), experiment_id: currentExperimentId, pos_x: best ? best.cx : null, pos_y: best ? best.cy : null }),
+            }).catch(() => {});
           }
           const accN = z.events?.accumulate?.n || 5;
           if (accumulateCounts[z.id] >= accN && accumulateCounts[z.id] > (accumulateLastFired[z.id] || 0)
               && accumulateCounts[z.id] % accN === 0) {
-            logCam(`🔢 ${z.name}: 累计进入${accumulateCounts[z.id]}次`, 'info');
+            logCam(`🔢 [累计] ${z.name} | 触发: 累计进入达到${accumulateCounts[z.id]}次(每${accN}次) | 来源: 摄像头检测`, 'info');
+            const accRule = findEventRuleName(z.name, 'accumulate');
+            if (accRule) logCam(`📌 [触发规则] 已触发「${accRule}」`, '');
             accumulateLastFired[z.id] = accumulateCounts[z.id];
+            fetch('/api/experiment/camera-event', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ zone: z.name, event: 'accumulate', n: accN, count: accumulateCounts[z.id], ts: Date.now(), experiment_id: currentExperimentId }),
+            }).catch(() => {});
           }
         } else if (leaveDebounce[z.id] >= DEBOUNCE_FRAMES && had) {
           inZone[z.id] = false;
           dwellTimers[z.id] = 0;
           dwellFired[z.id] = false;
-          logCam(`🧪 ${z.name}: 动物离开`, 'warn');
+          const posInfo = best ? `位置(${best.cx.toFixed(0)},${best.cy.toFixed(0)})` : '位置未知';
+          logCam(`🚪 [离开] ${z.name} | 触发: 动物${posInfo}离开区域 | 来源: 摄像头检测`, 'warn');
+          const leaveRule = findEventRuleName(z.name, 'leave');
+          if (leaveRule) logCam(`📌 [触发规则] 已触发「${leaveRule}」`, '');
           fetch('/api/experiment/camera-event', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ zone: z.name, event: 'leave', ts: Date.now(), experiment_id: currentExperimentId }),
+            body: JSON.stringify({ zone: z.name, event: 'leave', ts: Date.now(), experiment_id: currentExperimentId, pos_x: best ? best.cx : null, pos_y: best ? best.cy : null }),
           }).catch(() => {});
         }
       });
@@ -1740,7 +1975,7 @@ async function startCameraDetection() {
     document.getElementById('cameraDetectStatus').textContent =
       `✅ 检测运行中 | ${algoLabel} | ${contrast === 'dark' ? '比背景深的动物' : '比背景浅的动物'} | 灵敏度 ${sensStatus} | 对象面积 ${sizeMinStatus}-${sizeMaxStatus}`;
   } catch (e) {
-    toast('检测启动失败: ' + e.message, 'error');
+    toast('检测暂未启动，请重试', 'error');
     document.getElementById('btnStartDetection').disabled = false;
     document.getElementById('btnStopDetection').disabled = true;
   }
@@ -1876,23 +2111,23 @@ zoneCanvas.addEventListener('contextmenu', (e) => {
   const near = findNearestVertex(pos.x, pos.y);
   if (near.zone >= 0 && near.point >= 0) {
     if (zones[near.zone].points.length <= 3) {
-      toast('至少需要3个顶点，请删除整个区域', 'warn');
+      toast('区域至少需要3个顶点，请移除整个区域', 'warn');
       return;
     }
-    if (!confirm('确定删除此顶点吗？至少保留3个顶点')) return;
+    if (!confirm('确认移除此顶点？区域至少需要3个顶点')) return;
     zones[near.zone].points.splice(near.point, 1);
     drawZones(); updateZoneList();
-    toast('已删除顶点', 'info');
+    toast('已移除顶点', 'info');
   } else {
     const zoneIdx = zones.findIndex(z => {
       if (!z.points || z.points.length < 3) return false;
       return pointInPolygon(pos.x, pos.y, z.points);
     });
     if (zoneIdx >= 0) {
-      if (confirm(`确定删除区域「${zones[zoneIdx].name}」吗？`)) {
+      if (confirm(`确认移除区域「${zones[zoneIdx].name}」？`)) {
         zones.splice(zoneIdx, 1);
         drawZones(); updateZoneList();
-        toast('已删除区域', 'warn');
+        toast('已移除区域', 'warn');
       }
     }
   }
