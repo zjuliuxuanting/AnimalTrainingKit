@@ -249,7 +249,7 @@ function showConfigPanel(id) {
 
   if (n.type === 'trigger') {
     extra = `<label>信号源</label><select id="signalSourceSelect" onchange="updateParam('${id}','signal_id',this.value)">
-      <option value="生成信号" ${params.signal_id==='生成信号'?'selected':''}>程序生成信号（无硬件时测试用）</option>
+      <option value="生成信号" ${params.signal_id==='生成信号'?'selected':''}>模拟信号（测试用）</option>
       <option value="硬件传感器" ${params.signal_id==='硬件传感器'?'selected':''}>硬件传感器（控制盒）</option>
       ${getSignalSourceOptions(params.signal_id)}
     </select>
@@ -263,7 +263,7 @@ function showConfigPanel(id) {
     extra = `<label>等待时间（毫秒）</label><input type="number" value="${params.duration_ms || 1000}" onchange="updateParam('${id}','duration_ms',parseInt(this.value))">
       <p style="color:var(--text-secondary);font-size:11px;margin-top:4px">💡 1000 毫秒 = 1 秒</p>`;
   } else if (n.type === 'execute') {
-    extra = `<label>执行器名称</label><input value="${params.actuator_id || ''}" onchange="updateParam('${id}','actuator_id',this.value)">
+    extra = `<label>执行器名称</label><input value="${escapeHtml(params.actuator_id || '')}" onchange="updateParam('${id}','actuator_id',this.value)">
       <label>动作类型</label><select onchange="updateParam('${id}','action',this.value)">
         <option value="high" ${params.action==='high'?'selected':''}>开启</option>
         <option value="low" ${params.action==='low'?'selected':''}>关闭</option>
@@ -274,7 +274,7 @@ function showConfigPanel(id) {
         <label>脉冲时长（毫秒）</label><input type="number" value="${params.duration_ms || 1000}" onchange="updateParam('${id}','duration_ms',parseInt(this.value))">
       </div>`;
   } else if (n.type === 'condition') {
-    extra = `<label>变量名</label><input value="${params.variable || '计数'}" onchange="updateParam('${id}','variable',this.value)">
+    extra = `<label>变量名</label><input value="${escapeHtml(params.variable || '计数')}" onchange="updateParam('${id}','variable',this.value)">
       <label>比较方式</label><select onchange="updateParam('${id}','operator',this.value)">
         <option value="eq" ${params.operator==='eq'?'selected':''}>等于</option>
         <option value="gt" ${params.operator==='gt'?'selected':''}>大于</option>
@@ -287,7 +287,7 @@ function showConfigPanel(id) {
     extra = `<label>最大循环次数</label><input type="number" value="${params.max_iterations || 10}" onchange="updateParam('${id}','max_iterations',parseInt(this.value))">
       <label>超时时间（秒）</label><input type="number" value="${(params.timeout_ms || 60000)/1000}" onchange="updateParam('${id}','timeout_ms',parseInt(this.value)*1000)">`;
   } else if (n.type === 'variable') {
-    extra = `<label>变量名</label><input value="${params.name || '计数'}" onchange="updateParam('${id}','name',this.value)">
+    extra = `<label>变量名</label><input value="${escapeHtml(params.name || '计数')}" onchange="updateParam('${id}','name',this.value)">
       <label>操作</label><select onchange="updateParam('${id}','operation',this.value)">
         <option value="set" ${params.operation==='set'?'selected':''}>赋值为</option>
         <option value="inc" ${params.operation==='inc'?'selected':''}>加 1</option>
@@ -297,7 +297,7 @@ function showConfigPanel(id) {
         <label>值</label><input type="number" value="${params.value || 0}" onchange="updateParam('${id}','value',parseInt(this.value))">
       </div>`;
   } else if (n.type === 'record') {
-    extra = `<label>事件名称</label><input value="${params.event_name || '记录事件'}" onchange="updateParam('${id}','event_name',this.value)">
+    extra = `<label>事件名称</label><input value="${escapeHtml(params.event_name || '记录事件')}" onchange="updateParam('${id}','event_name',this.value)">
       <p style="color:var(--text-secondary);font-size:11px;margin-top:4px">该事件会被记录到实验数据中</p>`;
   }
   document.getElementById('cfgExtra').innerHTML = extra;
@@ -334,7 +334,7 @@ function getSignalSourceOptions(selected) {
       return `<option value="${s.id}" ${sel}>${s.label}</option>`;
     }).join('');
   }
-  return `<option value="生成信号" ${selected==='生成信号'?'selected':''}>程序生成信号（无硬件时测试用）</option>
+  return `<option value="生成信号" ${selected==='生成信号'?'selected':''}>模拟信号（测试用）</option>
     <option value="硬件传感器" ${selected==='硬件传感器'?'selected':''}>硬件传感器（控制盒）</option>
     <option value="camera:区域A:enter" ${selected==='camera:区域A:enter'?'selected':''}>摄像头 - 区域 A - 进入</option>
     <option value="camera:区域A:leave" ${selected==='camera:区域A:leave'?'selected':''}>摄像头 - 区域 A - 离开</option>`;

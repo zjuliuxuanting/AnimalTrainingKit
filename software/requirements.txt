@@ -17,3 +17,7 @@ uvicorn>=0.22.0
 # 旧 GUI（已归档）
 # PyQt6>=6.5
 # PyQt6-WebEngine>=6.5
+
+# 测试（开发依赖）
+pytest>=7.4
+httpx>=0.24  # FastAPI TestClient 需要

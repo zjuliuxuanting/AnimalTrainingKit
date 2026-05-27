@@ -94,7 +94,7 @@ def export_session_csv(
     """
     按会话导出 CSV，文件名 {动物编号}_{实验名称}_{日期}_{时间}.csv
     """
-    safe_subject = subject_id.replace(" ", "_").replace("/", "_").replace(":", "_")[:32] if subject_id else "未知"
+    safe_subject = subject_id.replace(" ", "_").replace("/", "_").replace(":", "_")[:32] if subject_id else "未命名动物"
     safe_name = session_name.replace(" ", "_").replace("/", "_").replace(":", "_")[:32] if session_name else "未命名"
     ts = time.strftime("%Y%m%d_%H%M%S")
     filename = f"{safe_subject}_{safe_name}_{ts}.csv"

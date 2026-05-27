@@ -21,36 +21,23 @@
 
 <nav class="navbar">
   <h1>🧪 行为学训练盒</h1>
-  <div class="status" id="navStatus">服务运行中</div>
+  <div style="display:flex;align-items:center;gap:8px">
+    <div id="currentExpBadge" style="display:none;background:#E8F5E9;color:#2E7D32;padding:4px 12px;border-radius:6px;font-size:13px;font-weight:500"></div>
+    <div class="status" id="navStatus">服务运行中</div>
+  </div>
 </nav>
 
 <div class="tabs" id="tabs">
-  <div class="tab active" data-tab="device">📡 设备</div>
-  <div class="tab" data-tab="experiment">🧪 实验管理</div>
+  <div class="tab active" data-tab="experiment">🧪 实验管理</div>
   <div class="tab" data-tab="camera">📷 摄像头</div>
+  <div class="tab" data-tab="device">📡 设备</div>
   <div class="tab" data-tab="flow">🔀 流程编辑</div>
   <div class="tab" data-tab="monitor">📊 运行监控</div>
   <div class="tab" data-tab="data">📈 数据图表</div>
 </div>
 
-<!-- Tab: Device -->
-<div class="tab-content active" id="tab-device">
-  <div class="card">
-    <h3>📡 硬件控制盒</h3>
-    <div class="flex flex-wrap" style="align-items:end">
-      <div class="form-group" style="flex:1;min-width:120px"><label>IP 地址</label><input id="deviceHost" value="192.168.4.1"></div>
-      <div class="form-group" style="flex:0;width:80px"><label>端口</label><input id="devicePort" value="8080"></div>
-      <div style="padding-bottom:12px">
-        <button class="btn btn-success btn-sm" onclick="connectDevice()">🔗 连接</button>
-        <button class="btn btn-danger btn-sm" onclick="disconnectDevice()" disabled>🔗 断开</button>
-      </div>
-    </div>
-    <div id="deviceStatus" style="font-size:13px;color:var(--text-secondary)">控制盒未连接</div>
-  </div>
-</div>
-
 <!-- Tab: Experiment -->
-<div class="tab-content" id="tab-experiment">
+<div class="tab-content active" id="tab-experiment">
   <div class="flex" style="margin-bottom:12px;justify-content:space-between;align-items:center">
     <h2 style="margin:0">实验管理</h2>
     <button class="btn btn-success" onclick="showCreateForm()">＋ 新建实验</button>
@@ -130,7 +117,7 @@
         <input type="checkbox" id="expTriggerCamera" onchange="onTriggerCameraChange()"> 摄像头区域事件（需先配置摄像头）
       </label>
       <label style="display:flex;align-items:center;gap:6px;font-weight:normal;margin:2px 0">
-        <input type="checkbox" id="expTriggerHardware" onchange="onTriggerHardwareChange()"> 下位机传感器
+        <input type="checkbox" id="expTriggerHardware" onchange="onTriggerHardwareChange()"> 硬件传感器
       </label>
       <div id="hardwareCountArea" style="display:none;margin:6px 0 2px 24px">
         <label style="font-size:12px">连接的设备数量</label>
@@ -143,7 +130,7 @@
     <div class="form-group">
       <label>保存位置</label>
       <div style="display:flex;gap:4px;align-items:center">
-        <input id="expSavePath" value="" placeholder="留空则保存到默认位置 data/experiments/" style="flex:1;padding:8px;border:1px solid var(--border);border-radius:6px">
+        <input id="expSavePath" value="" placeholder="留空则保存到默认位置 data_store/experiments/" style="flex:1;padding:8px;border:1px solid var(--border);border-radius:6px">
         <button class="btn btn-sm" onclick="browseSavePath()">📂 浏览</button>
       </div>
     </div>
@@ -159,6 +146,11 @@
     <div class="flex" style="justify-content:space-between;align-items:center;margin-bottom:8px">
       <h3 style="margin:0">实验记录</h3>
       <div><input id="expFilter" placeholder="筛选动物编号或名称..." style="padding:4px 8px;border:1px solid var(--border);border-radius:4px" oninput="renderExperimentList()"></div>
+    </div>
+    <div id="batchDeleteBar" style="display:none;align-items:center;gap:12px;padding:8px 12px;background:#FFF3E0;border-radius:6px;margin-bottom:8px">
+      <span class="batch-count" style="font-size:13px;font-weight:500">已选 0 个</span>
+      <button class="btn btn-sm btn-danger" onclick="batchDeleteExperiments()" style="color:#F44336;border-color:#F44336">🗑 删除选中</button>
+      <button class="btn btn-sm" onclick="toggleSelectAll(false)" style="margin-left:auto">取消全选</button>
     </div>
     <div id="experimentList"><div class="empty-state"><p>还没有实验记录，点击上方"新建实验"开始</p></div></div>
   </div>
@@ -294,73 +286,33 @@
   </div>
 
   <div class="card camera-step" id="camStep1">
-    <h3>② 定义追踪目标</h3>
-    <p style="color:var(--text-secondary);font-size:13px;margin-bottom:8px">选择动物颜色对比方向。不是按品种，而是**比背景深还是浅**。</p>
-    <div class="form-group">
-      <label>动物颜色对比（相对背景）</label>
-      <div style="display:flex;gap:12px;margin-top:4px">
-        <label style="display:flex;align-items:center;gap:4px;padding:8px 16px;border:2px solid var(--border);border-radius:8px;cursor:pointer" id="contrastDark" onclick="setContrast('dark')">
-          <input type="radio" name="contrast" value="dark" checked> ⬛ 比背景更暗
-        </label>
-        <label style="display:flex;align-items:center;gap:4px;padding:8px 16px;border:2px solid var(--border);border-radius:8px;cursor:pointer" id="contrastLight" onclick="setContrast('light')">
-          <input type="radio" name="contrast" value="light"> ⬜ 比背景更亮
-        </label>
-      </div>
-    </div>
-    <div class="form-group">
-      <label>检测算法</label>
-      <select id="camAlgo" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px">
-        <option value="bgsub">背景差分（推荐）</option>
-        <option value="graythresh">灰度阈值</option>
-        <option value="silhouette">动态剪影</option>
-        <option value="colordetect">颜色检测</option>
-      </select>
-    </div>
-    <div id="subjectParams" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">
-      <div class="form-group"><label>检测灵敏度（越小越敏感）</label><input type="range" id="camSensitivity" min="1" max="100" value="30" oninput="document.getElementById('camSensitivityVal').textContent=this.value"><span id="camSensitivityVal" style="font-size:12px;color:var(--text-secondary)">30</span></div>
-      <div class="form-group"><label>最小对象尺寸（像素）</label><input type="range" id="camMinArea" min="50" max="2000" value="500" oninput="document.getElementById('camMinAreaVal').textContent=this.value"><span id="camMinAreaVal" style="font-size:12px;color:var(--text-secondary)">500</span></div>
-    </div>
-    <div style="margin-top:12px">
-      <button class="btn btn-sm" id="btnToggleAdvanced" onclick="toggleAdvancedParams()" style="width:100%;text-align:left">⚙ 高级参数 ▸</button>
-      <div id="advancedParams" style="display:none;margin-top:8px;padding:12px;background:var(--bg-secondary);border-radius:8px">
-        <div class="form-group"><label>灰度阈值范围</label><div style="display:flex;gap:8px;align-items:center"><input type="range" id="camThreshLow" min="0" max="255" value="30" style="flex:1" oninput="document.getElementById('camThreshLowVal').textContent=this.value"><span id="camThreshLowVal" style="font-size:12px;min-width:24px">30</span><span style="font-size:12px;color:var(--text-secondary)">—</span><input type="range" id="camThreshHigh" min="0" max="255" value="220" style="flex:1" oninput="document.getElementById('camThreshHighVal').textContent=this.value"><span id="camThreshHighVal" style="font-size:12px;min-width:24px">220</span></div></div>
-        <div class="form-group"><label>帧权重（α 融合系数）</label><input type="range" id="camFrameWeight" min="1" max="100" value="70" oninput="document.getElementById('camFrameWeightVal').textContent=(this.value/100).toFixed(2)"><span id="camFrameWeightVal" style="font-size:12px;color:var(--text-secondary)">0.70</span></div>
-        <div class="form-group"><label>像素平滑（高斯模糊半径）</label><input type="range" id="camPixelSmooth" min="0" max="10" value="1" oninput="document.getElementById('camPixelSmoothVal').textContent=this.value"><span id="camPixelSmoothVal" style="font-size:12px;color:var(--text-secondary)">1</span></div>
-        <div class="form-group"><label>平滑轨迹（移动平均窗口）</label><input type="range" id="camSmoothTrajectory" min="0" max="30" value="5" oninput="document.getElementById('camSmoothTrajectoryVal').textContent=this.value"><span id="camSmoothTrajectoryVal" style="font-size:12px;color:var(--text-secondary)">5</span></div>
-        <div class="form-group"><label>丢帧矫正（最大丢失帧数）</label><input type="range" id="camDropFrame" min="0" max="10" value="2" oninput="document.getElementById('camDropFrameVal').textContent=this.value"><span id="camDropFrameVal" style="font-size:12px;color:var(--text-secondary)">2</span></div>
-        <div class="form-group"><label>轮廓侵蚀（像素迭代次数）</label><input type="range" id="camContourErosion" min="0" max="5" value="0" oninput="document.getElementById('camContourErosionVal').textContent=this.value"><span id="camContourErosionVal" style="font-size:12px;color:var(--text-secondary)">0</span></div>
-        <div class="form-group"><label>对象大小范围（像素面积）</label><div style="display:flex;gap:8px;align-items:center"><input type="number" id="camObjSizeMin" value="100" min="10" max="5000" style="width:80px;padding:4px 8px;border:1px solid var(--border);border-radius:4px"><span style="font-size:12px;color:var(--text-secondary)">—</span><input type="number" id="camObjSizeMax" value="5000" min="10" max="50000" style="width:80px;padding:4px 8px;border:1px solid var(--border);border-radius:4px"></div></div>
-      </div>
-    </div>
-  </div>
-
-  <div class="card camera-step" id="camStep2">
-    <h3>③ 背景建模</h3>
+    <h3>② 背景建模</h3>
     <p style="color:var(--text-secondary);font-size:13px;margin-bottom:8px">软件会自动建立参考背景。选择一种方式：</p>
     <div style="display:flex;gap:8px;margin-bottom:12px">
       <button class="btn btn-sm btn-primary" id="bgMethodAuto" onclick="setBgMethod('auto')" style="flex:1">🔄 自动采集（30帧取中值）</button>
-      <button class="btn btn-sm" id="bgMethodFill" onclick="setBgMethod('fill')" style="flex:1">✏️ 框选动物自动填充</button>
+      <button class="btn btn-sm" id="bgMethodFill" onclick="setBgMethod('fill')" style="flex:1">✏️ 框选动物位置填充</button>
     </div>
     <div id="bgAutoArea" style="text-align:center">
-      <video id="camPreviewBg" autoplay playsinline style="max-width:100%;border-radius:8px;background:#000;max-height:360px"></video>
+      <video id="camPreviewBg" autoplay playsinline muted style="max-width:100%;border-radius:8px;background:#000;max-height:360px"></video>
       <div class="flex" style="justify-content:center;margin-top:8px">
         <button class="btn btn-success" id="btnCaptureBg" onclick="startAutoBackground()">📸 开始采集背景（30帧）</button>
       </div>
       <div id="camBgProgress" style="margin-top:4px;color:var(--text-secondary);font-size:12px">点击按钮开始自动采集，请保持画面稳定</div>
     </div>
     <div id="bgFillArea" style="display:none;text-align:center">
-      <p style="color:var(--text-secondary);font-size:12px;margin-bottom:8px">框出动物所在区域，软件会自动用周围像素填充</p>
+      <p style="color:var(--text-secondary);font-size:12px;margin-bottom:8px">在画面中用多边形圈出动物所在位置。点击顶点定义多边形区域，双击最后一个顶点闭合。软件会自动用周围像素填充以移除动物，生成干净背景。</p>
+      <video id="camFillVideo" autoplay playsinline muted style="display:none"></video>
       <canvas id="camFillCanvas" style="max-width:100%;border-radius:8px;background:#000;max-height:360px;cursor:crosshair"></canvas>
       <div class="flex" style="justify-content:center;margin-top:8px;gap:8px">
-        <button class="btn btn-sm btn-primary" onclick="startFillBox()">✏️ 框选动物位置</button>
+        <button class="btn btn-sm btn-primary" id="btnToggleFillPreview" onclick="startFillBox()">📷 打开预览</button>
         <button class="btn btn-success btn-sm" onclick="applyFillBg()">✅ 生成背景</button>
       </div>
-      <div id="camFillStatus" style="margin-top:4px;color:var(--text-secondary);font-size:12px">先框选动物，再点生成背景</div>
+      <div id="camFillStatus" style="margin-top:4px;color:var(--text-secondary);font-size:12px">点击画面放置顶点，用多边形圈出动物位置。双击闭合。</div>
     </div>
   </div>
 
-  <div class="card camera-step" id="camStep3">
-    <h3>④ 标尺校准</h3>
+  <div class="card camera-step" id="camStep2">
+    <h3>③ 标尺校准</h3>
     <p style="color:var(--text-secondary);font-size:13px;margin-bottom:8px">在画面上点击两点画一条线段，输入该线段对应的真实长度（如10厘米），系统自动计算像素与实际距离的比例。</p>
     <div style="text-align:center">
       <canvas id="camRulerCanvas" style="max-width:100%;border-radius:8px;background:#000;max-height:400px;cursor:crosshair"></canvas>
@@ -380,29 +332,125 @@
     </div>
   </div>
 
-  <div class="card camera-step" id="camStep4">
-    <h3>⑤ 绘制检测区域</h3>
-    <p style="color:var(--text-secondary);font-size:13px;margin-bottom:8px">在画面上点击顶点绘制多边形区域。双击最后一个顶点闭合多边形。</p>
+  <div class="card camera-step" id="camStep3">
+    <h3>④ 绘制检测区域</h3>
+    <p style="color:var(--text-secondary);font-size:13px;margin-bottom:8px">在画面上点击顶点绘制多边形区域。双击最后一个顶点闭合多边形。面积标注自动使用标尺校准后的真实单位。</p>
     <div style="position:relative;text-align:center">
       <canvas id="camCanvas" style="max-width:100%;border-radius:8px;background:#000;max-height:400px;cursor:crosshair"></canvas>
       <div id="camZones"></div>
     </div>
     <div class="flex" style="justify-content:center;margin-top:8px;gap:8px">
       <button class="btn btn-sm btn-primary" onclick="addZone()">➕ 添加区域</button>
-      <button class="btn btn-sm btn-danger" onclick="removeLastZone()">➖ 删除区域</button>
+      <button class="btn btn-sm btn-danger" onclick="clearAllZones()">🗑 清空全部</button>
     </div>
     <div id="zoneList" style="margin-top:8px"></div>
+    <p style="margin-top:8px;color:var(--text-secondary);font-size:12px;text-align:center">💡 提示：右键点击区域可删除，右键点击顶点可删除顶点，拖拽顶点可移动</p>
+  </div>
+
+  <div class="card camera-step" id="camStep4">
+    <h3>⑤ 区域事件定义</h3>
+    <p style="color:var(--text-secondary);font-size:13px;margin-bottom:8px">为每个检测区域定义事件规则。动物进入/离开/累计N次/停留X秒时会产生触发信号，可在流程编辑器中引用。</p>
+    <div id="zoneConfigList"></div>
   </div>
 
   <div class="card camera-step" id="camStep5">
-    <h3>⑥ 区域事件定义</h3>
-    <p style="color:var(--text-secondary);font-size:13px;margin-bottom:8px">为每个检测区域命名，配置事件类型。动物进入/离开/累计N次/停留X秒时会产生触发信号，可在流程编辑器中引用。</p>
-    <div id="zoneConfigList"></div>
+    <h3>⑥ 定义追踪目标</h3>
+    <p style="color:var(--text-secondary);font-size:12px;margin-bottom:6px">选择动物颜色对比方向，调节参数让金色检测框准确框住动物。</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div class="form-group">
+        <label>检测算法</label>
+        <select id="camAlgo" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px">
+          <option value="bgsub">背景差分（推荐）</option>
+          <option value="graythresh">灰度阈值</option>
+          <option value="silhouette">动态剪影</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>亮度差异阈值</label>
+        <div style="display:flex;align-items:center;gap:6px">
+          <input type="range" id="camBrightnessThresh" min="0" max="255" value="30" style="flex:1" oninput="document.getElementById('camBrightnessThreshVal').textContent=this.value">
+          <span id="camBrightnessThreshVal" style="font-size:12px;color:var(--text-secondary);min-width:24px">30</span>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>检测灵敏度</label>
+        <div style="display:flex;align-items:center;gap:6px">
+          <input type="range" id="camSensitivity" min="5" max="80" value="25" style="flex:1" oninput="document.getElementById('camSensitivityVal').textContent=this.value">
+          <span id="camSensitivityVal" style="font-size:12px;color:var(--text-secondary);min-width:24px">25</span>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>对象大小范围（像素面积）</label>
+        <div style="display:flex;gap:4px;align-items:center">
+          <input type="range" id="camObjSizeMin" style="flex:1" oninput="document.getElementById('camObjSizeMinVal').textContent=this.value">
+          <span id="camObjSizeMinVal" style="font-size:11px;min-width:20px">100</span>
+          <span style="font-size:11px;color:var(--text-secondary)">—</span>
+          <input type="range" id="camObjSizeMax" style="flex:1" oninput="document.getElementById('camObjSizeMaxVal').textContent=this.value">
+          <span id="camObjSizeMaxVal" style="font-size:11px;min-width:28px">5000</span>
+        </div>
+        <span id="camObjSizeInfo" style="font-size:10px;color:var(--text-secondary);margin-top:2px;display:block">启动摄像头预览后根据实际分辨率自动调整范围</span>
+      </div>
+      <div class="form-group" style="grid-column:1/-1">
+        <label>动物颜色对比（相对背景）</label>
+        <div style="display:flex;gap:8px;margin-top:2px">
+          <label style="display:flex;align-items:center;gap:4px;padding:4px 12px;border:2px solid var(--border);border-radius:8px;cursor:pointer;font-size:13px" id="contrastDark" onclick="setContrast('dark')">
+            <input type="radio" name="contrast" value="dark" checked> ⬛ 比背景深
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;padding:4px 12px;border:2px solid var(--border);border-radius:8px;cursor:pointer;font-size:13px" id="contrastLight" onclick="setContrast('light')">
+            <input type="radio" name="contrast" value="light"> ⬜ 比背景浅
+          </label>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:6px">
+      <button class="btn btn-sm" id="btnToggleAdvanced" onclick="toggleAdvancedParams()" style="width:100%;text-align:left;font-size:12px">⚙ 高级参数 ▸</button>
+      <div id="advancedParams" style="display:none;margin-top:6px;padding:8px;background:var(--bg-secondary);border-radius:8px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+          <div class="form-group"><label>灰度阈值范围</label><div style="display:flex;gap:4px;align-items:center"><input type="range" id="camThreshLow" min="0" max="255" value="30" style="flex:1" oninput="document.getElementById('camThreshLowVal').textContent=this.value"><span id="camThreshLowVal" style="font-size:11px;min-width:20px">30</span><span style="font-size:11px;color:var(--text-secondary)">—</span><input type="range" id="camThreshHigh" min="0" max="255" value="220" style="flex:1" oninput="document.getElementById('camThreshHighVal').textContent=this.value"><span id="camThreshHighVal" style="font-size:11px;min-width:24px">220</span></div></div>
+          <div class="form-group"><label>像素平滑（高斯模糊半径）</label><div style="display:flex;align-items:center;gap:4px"><input type="range" id="camPixelSmooth" min="0" max="5" value="1" style="flex:1" oninput="document.getElementById('camPixelSmoothVal').textContent=this.value"><span id="camPixelSmoothVal" style="font-size:11px;min-width:12px">1</span></div></div>
+          <div class="form-group"><label>轮廓侵蚀迭代</label><div style="display:flex;align-items:center;gap:4px"><input type="range" id="camContourErosion" min="0" max="4" value="1" style="flex:1" oninput="document.getElementById('camContourErosionVal').textContent=this.value"><span id="camContourErosionVal" style="font-size:11px;min-width:12px">1</span></div></div>
+          <div class="form-group"><label>轮廓膨胀迭代</label><div style="display:flex;align-items:center;gap:4px"><input type="range" id="camContourDilate" min="0" max="4" value="2" style="flex:1" oninput="document.getElementById('camContourDilateVal').textContent=this.value"><span id="camContourDilateVal" style="font-size:11px;min-width:12px">2</span></div></div>
+        </div>
+        <hr style="border:none;border-top:1px solid var(--border);margin:6px 0">
+        <p style="font-size:12px;font-weight:500;margin-bottom:4px">平滑处理</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+          <div class="form-group">
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" id="camTrackSmooth" onchange="onSmoothChange()"> 轨迹平滑</label>
+            <div style="display:flex;align-items:center;gap:4px;margin-top:2px">
+              <span style="font-size:11px;color:var(--text-secondary);min-width:16px">强度</span>
+              <input type="range" id="camTrackSmoothStrength" min="1" max="10" value="3" style="flex:1" oninput="document.getElementById('camTrackSmoothStrengthVal').textContent=this.value" disabled>
+              <span id="camTrackSmoothStrengthVal" style="font-size:11px;min-width:12px">3</span>
+            </div>
+          </div>
+          <div class="form-group">
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" id="camBoxSmooth" onchange="onSmoothChange()"> 检测框平滑</label>
+            <div style="display:flex;align-items:center;gap:4px;margin-top:2px">
+              <span style="font-size:11px;color:var(--text-secondary);min-width:16px">强度</span>
+              <input type="range" id="camBoxSmoothStrength" min="1" max="10" value="3" style="flex:1" oninput="document.getElementById('camBoxSmoothStrengthVal').textContent=this.value" disabled>
+              <span id="camBoxSmoothStrengthVal" style="font-size:11px;min-width:12px">3</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <hr style="border:none;border-top:1px solid var(--border);margin:8px 0">
+    <div style="text-align:center">
+      <p style="color:var(--text-secondary);font-size:11px;margin-bottom:4px">📺 追踪预览 — 确认金色方框准确框住动物（调整参数时预览实时更新）</p>
+      <canvas id="camTrackPreview" style="max-width:100%;border-radius:8px;background:#000;max-height:280px;display:none"></canvas>
+      <div id="camTrackStatus" style="margin-top:2px;font-size:11px;color:var(--text-secondary)"></div>
+      <div class="flex" style="justify-content:center;margin-top:4px;gap:6px">
+        <button class="btn btn-sm btn-primary" id="btnStartTrackPreview" onclick="startTrackPreview()" style="font-size:12px">▶ 预览追踪效果</button>
+        <button class="btn btn-sm btn-danger" id="btnStopTrackPreview" onclick="stopTrackPreview()" style="font-size:12px" disabled>⏹ 停止预览</button>
+      </div>
+    </div>
   </div>
 
   <div class="card camera-step" id="camStep6">
     <h3>⑦ 开始检测</h3>
-    <p style="color:var(--text-secondary);font-size:13px;margin-bottom:8px">确认所有区域和事件配置无误后，开始摄像头检测。检测事件将写入当前实验的数据记录。</p>
+    <p style="color:var(--text-secondary);font-size:13px;margin-bottom:8px">确认所有设置正确后，开始摄像头检测。检测事件将写入当前实验的数据记录。</p>
+    <div style="text-align:center;margin-bottom:12px">
+      <canvas id="camDetectPreview" style="max-width:100%;border-radius:8px;background:#000;max-height:300px;display:none"></canvas>
+    </div>
     <div class="flex" style="justify-content:center;margin-top:12px">
       <button class="btn btn-success" onclick="startCameraDetection()" id="btnStartDetection">▶ 开始检测</button>
       <button class="btn btn-danger" onclick="stopCameraDetection()" id="btnStopDetection" disabled>⏹ 停止检测</button>
@@ -416,8 +464,24 @@
   </div>
 </div>
 
+<!-- Tab: Device -->
+<div class="tab-content" id="tab-device">
+  <div class="card">
+    <h3>📡 硬件控制盒</h3>
+    <div class="flex flex-wrap" style="align-items:end">
+      <div class="form-group" style="flex:1;min-width:120px"><label>IP 地址</label><input id="deviceHost" value="192.168.4.1"></div>
+      <div class="form-group" style="flex:0;width:80px"><label>端口</label><input id="devicePort" value="8080"></div>
+      <div style="padding-bottom:12px">
+        <button class="btn btn-success btn-sm" onclick="connectDevice()">🔗 连接</button>
+        <button class="btn btn-danger btn-sm" onclick="disconnectDevice()" disabled>🔗 断开</button>
+      </div>
+    </div>
+    <div id="deviceStatus" style="font-size:13px;color:var(--text-secondary)">控制盒未连接</div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-<script src="/static/js/app.js?v=2"></script>
+<script src="/static/js/app.js?v=3"></script>
 <script src="/static/js/flow-editor.js?v=2"></script>
 <script src="/static/js/charts.js?v=2"></script>
 <script src="/static/js/camera.js?v=2"></script>

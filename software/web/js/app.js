@@ -11,6 +11,12 @@ function toast(msg, type = 'info') {
   setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity 0.3s'; setTimeout(() => el.remove(), 300); }, 3000);
 }
 
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
 function log(msg, type = 'info') {
   const el = document.getElementById('eventLog');
   if (!el) return;
@@ -44,6 +50,11 @@ connectWS();
 
 document.querySelectorAll('.tab').forEach(tab => {
   tab.addEventListener('click', () => {
+    // P0-6: 摄像头标签页灰显时拦截点击
+    if (tab.dataset.tab === 'camera' && tab.classList.contains('tab-disabled')) {
+      toast('请先在实验管理中「编辑」或「启动」一个启用了摄像头的实验', 'warn');
+      return;
+    }
     if (tab.dataset.tab !== 'camera' && typeof releaseCamera === 'function') {
       releaseCamera();
     }
@@ -210,6 +221,12 @@ async function renderExperimentList() {
       );
     }
 
+    let camStatuses = {};
+    try {
+      const camResp = await api('/api/experiments/camera-statuses');
+      camStatuses = camResp.statuses || {};
+    } catch (e) { /* ignore */ }
+
     const statusMap = {
       idle: '等待启动', created: '等待启动',
       running: '运行中 ●',
@@ -218,20 +235,42 @@ async function renderExperimentList() {
       error: '异常停止',
     };
 
-    let html = `<table><tr><th>动物编号</th><th>实验名称</th><th>触发源</th><th>状态</th><th>已运行</th><th>事件数</th><th>操作</th></tr>`;
+    let html = `<table>
+      <tr>
+        <th style="width:32px"><input type="checkbox" id="selectAll" onchange="toggleSelectAll(this.checked)"></th>
+        <th>动物编号</th>
+        <th>实验名称</th>
+        <th>触发源</th>
+        <th>摄像头配置</th>
+        <th>状态</th>
+        <th>已运行</th>
+        <th>事件数</th>
+        <th>操作</th>
+      </tr>`;
     for (const exp of filtered) {
       const sources = [];
       if (exp.trigger_camera) sources.push('摄像头');
       if (exp.trigger_hardware) sources.push('下位机');
       const statusText = statusMap[exp.status] || statusMap.idle;
+
+      let camText = '—';
+      const camStatus = camStatuses[exp.id];
+      if (exp.trigger_camera) {
+        if (camStatus === 'completed') camText = '✅';
+        else camText = '⚠️';
+      }
+
       html += `<tr>
-        <td>${exp.subject_id || '—'}</td>
-        <td>${exp.name}</td>
+        <td style="width:32px"><input type="checkbox" class="exp-checkbox" data-exp-id="${exp.id}" data-exp-name="${escapeHtml(exp.name)}" onchange="updateBatchDeleteBar()"></td>
+        <td>${escapeHtml(exp.subject_id) || '—'}</td>
+        <td>${escapeHtml(exp.name)}</td>
         <td style="font-size:12px">${sources.join('、') || '手动'}</td>
+        <td style="font-size:12px;text-align:center" title="${camStatus === 'completed' ? '摄像头已配置' : camStatus === 'pending' ? '摄像头未配置完成' : ''}">${camText}</td>
         <td>${statusText}</td>
         <td style="font-size:12px">${exp.elapsed_min || '—'}</td>
         <td>${exp.event_count || 0}</td>
         <td style="white-space:nowrap">
+          <button class="btn btn-sm" onclick="enterExperiment('${exp.id}')">📝 编辑</button>
           <button class="btn btn-sm btn-primary" onclick="startExpRun('${exp.id}')">▶ 启动</button>
           <button class="btn btn-sm" onclick="viewExperiment('${exp.id}')">📂 详情</button>
           <button class="btn btn-sm btn-success" onclick="exportExperiment('${exp.id}')">📥 导出</button>
@@ -241,6 +280,7 @@ async function renderExperimentList() {
     }
     html += `</table>`;
     document.getElementById('experimentList').innerHTML = html;
+    updateBatchDeleteBar();
   } catch (e) {
     document.getElementById('experimentList').innerHTML = '<p style="color:var(--text-secondary)">加载失败，请刷新重试</p>';
   } finally {
@@ -252,6 +292,88 @@ async function renderExperimentList() {
   }
 }
 
+function toggleSelectAll(checked) {
+  document.querySelectorAll('.exp-checkbox').forEach(cb => cb.checked = checked);
+  updateBatchDeleteBar();
+}
+
+function updateBatchDeleteBar() {
+  const checked = document.querySelectorAll('.exp-checkbox:checked');
+  const bar = document.getElementById('batchDeleteBar');
+  if (!bar) return;
+  if (checked.length === 0) {
+    bar.style.display = 'none';
+    return;
+  }
+  bar.style.display = 'flex';
+  bar.querySelector('.batch-count').textContent = `已选 ${checked.length} 个`;
+}
+
+async function batchDeleteExperiments() {
+  const checked = document.querySelectorAll('.exp-checkbox:checked');
+  if (checked.length === 0) { toast('请先勾选要删除的实验', 'warn'); return; }
+
+  const names = [];
+  checked.forEach(cb => {
+    const n = cb.dataset.expName;
+    if (n) names.push(n);
+  });
+  let msg = '确定要删除以下实验吗？实验数据（含事件记录和导出文件）将一并删除，不可恢复。\n\n';
+  if (names.length <= 10) {
+    msg += names.map(n => '  • ' + n).join('\n');
+  } else {
+    msg += names.slice(0, 10).map(n => '  • ' + n).join('\n');
+    msg += `\n  ...等 ${names.length} 个`;
+  }
+
+  if (!confirm(msg)) return;
+
+  const ids = [];
+  checked.forEach(cb => ids.push(cb.dataset.expId));
+
+  try {
+    const result = await api('/api/experiments/batch-delete', {
+      method: 'POST',
+      body: JSON.stringify({ experiment_ids: ids }),
+    });
+    toast(`已删除 ${result.deleted} 个实验`, 'warn');
+    renderExperimentList();
+  } catch (e) {
+    toast('批量删除失败: ' + e.message, 'error');
+  }
+}
+
+async function enterExperiment(expId) {
+  try {
+    const exp = await api(`/api/experiments/${expId}`);
+    toast(`已进入实验: ${exp.name}`, 'info');
+
+    const badge = document.getElementById('currentExpBadge');
+    if (badge) {
+      badge.textContent = `📋 当前实验：${exp.name}（${exp.subject_id || '—'}）`;
+      badge.style.display = 'block';
+    }
+
+    if (exp.trigger_camera) {
+      if (typeof setCameraExperiment === 'function') {
+        setCameraExperiment(expId, exp.name, true);
+      }
+      document.querySelector('[data-tab="camera"]').click();
+      toast('已切换到摄像头标签页，请配置检测区域和事件', 'info');
+    } else {
+      // P0-6: 无摄像头实验仍跟踪上下文，但摄像头标签页灰显
+      if (typeof setCameraExperiment === 'function') {
+        setCameraExperiment(expId, exp.name, false);
+      }
+      document.querySelector('[data-tab="flow"]').click();
+      toast('该实验未启用摄像头，已切换到流程编辑器', 'info');
+    }
+    renderExperimentList();
+  } catch (e) {
+    toast('进入实验失败: ' + e.message, 'error');
+  }
+}
+
 async function startExpRun(expId) {
   const exp = await api(`/api/experiments/${expId}`);
   toast(`正在启动实验: ${exp.name}`, 'info');
@@ -259,15 +381,20 @@ async function startExpRun(expId) {
   document.getElementById('btnStop').disabled = false;
   const count = exp.max_trigger_count || 0;
 
+  const badge = document.getElementById('currentExpBadge');
+  if (badge) {
+    badge.textContent = `📋 当前实验：${exp.name}（${exp.subject_id || '—'}）`;
+    badge.style.display = 'block';
+  }
+
   if (exp.trigger_camera) {
     if (typeof setCameraExperiment === 'function') {
-      setCameraExperiment(expId, exp.name);
+      setCameraExperiment(expId, exp.name, true);
     }
-    if (typeof zones !== 'undefined' && zones.length > 0 && typeof startCameraDetection === 'function') {
-      startCameraDetection();
-    } else {
-      document.querySelector('[data-tab="camera"]').click();
-      toast('该实验启用了摄像头，已切换到摄像头标签页。请配置区域后开始检测', 'info');
+    toast('实验已启动，如需摄像头检测请切换到摄像头标签页手动开始', 'info');
+  } else {
+    if (typeof setCameraExperiment === 'function') {
+      setCameraExperiment(expId, exp.name, false);
     }
   }
 
@@ -292,14 +419,14 @@ async function viewExperiment(expId) {
     const sessions = sessionsData.sessions || [];
     let html = '<table style="width:100%">';
     const rows = [
-      ['实验名称', exp.name],
-      ['动物编号', exp.subject_id],
-      ['物种/品系', exp.species || '—'],
+      ['实验名称', escapeHtml(exp.name)],
+      ['动物编号', escapeHtml(exp.subject_id)],
+      ['物种/品系', escapeHtml(exp.species) || '—'],
       ['最长运行', exp.max_duration_min ? `${exp.max_duration_min} 分钟` : '不限'],
       ['最大触发次数', exp.max_trigger_count ? `${exp.max_trigger_count} 次` : '不设上限'],
       ['启动方式', exp.start_mode === 'manual' ? '手动' : '定时'],
-      ['动物备注', exp.subject_notes || '—'],
-      ['实验备注', exp.notes || '—'],
+      ['动物备注', escapeHtml(exp.subject_notes) || '—'],
+      ['实验备注', escapeHtml(exp.notes) || '—'],
       ['创建时间', new Date(exp.created_at).toLocaleString()],
     ];
     rows.forEach(([k, v]) => { html += `<tr><td style="font-weight:600;width:120px;padding:4px 8px">${k}</td><td style="padding:4px 8px">${v}</td></tr>`; });
@@ -335,7 +462,7 @@ async function exportExperiment(expId) {
       toast('没有运行数据可导出，请先启动实验', 'warn');
       return;
     }
-    const latest = sessions[sessions.length - 1];
+    const latest = sessions[0];
     const exportData = await api(`/api/sessions/${latest.id}/export`);
     toast(`数据已导出至 ${exportData.csv_path}`, 'success');
     log(`CSV 导出完成: ${exportData.csv_path}`, 'success');
@@ -376,6 +503,11 @@ async function stopExperiment() {
     toast('停止失败: ' + e.message, 'error');
   }
   document.getElementById('btnStop').disabled = true;
+  if (typeof clearExperimentContext === 'function') {
+    clearExperimentContext();
+  }
+  const badge = document.getElementById('currentExpBadge');
+  if (badge) badge.style.display = 'none';
 }
 
 let monitorInterval = null;

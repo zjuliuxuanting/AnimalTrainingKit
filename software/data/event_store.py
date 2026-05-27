@@ -65,6 +65,7 @@ class EventStore:
                 smoothing_flag,
             ),
         )
+        self._db.commit()
 
     def append_batch(self, events: List[Dict[str, Any]]):
         rows = [

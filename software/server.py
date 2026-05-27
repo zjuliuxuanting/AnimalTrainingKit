@@ -42,7 +42,7 @@ from data.database import Database
 from data.event_store import EventStore
 from data.processor import DataProcessor
 from data.export import export_session_csv
-from data.experiment_manager import set_experiments_root, create_experiment, list_experiments, get_experiment, update_experiment, delete_experiment, clone_experiment, save_flow, load_flow
+from data.experiment_manager import set_experiments_root, create_experiment, list_experiments, get_experiment, update_experiment, delete_experiment, batch_delete_experiments, get_all_camera_statuses, clone_experiment, save_flow, load_flow
 
 APP_VERSION = "v1.1.0"
 DEFAULT_PORT = 8000
@@ -57,19 +57,22 @@ ws_clients: set = set()
 _mutex = asyncio.Lock()
 _experiment_active = False
 _mock_device_mgr = None
-_camera_config_path = os.path.join(PROJECT_ROOT, "data", "camera_config.json")
+_camera_config_path = os.path.join(PROJECT_ROOT, "data_store", "camera_config.json")
 
 
 @asynccontextmanager
 async def lifespan(app_instance):
     global db, event_store, _loop
     _loop = asyncio.get_event_loop()
-    db_dir = os.path.join(PROJECT_ROOT, "data")
+    db_dir = os.path.join(PROJECT_ROOT, "data_store")
+    old_db_dir = os.path.join(PROJECT_ROOT, "data")
     os.makedirs(db_dir, exist_ok=True)
+    # 启动兼容迁移：如果 data_store/ 为空但旧 data/ 有数据，自动复制
+    _auto_migrate_if_needed(old_db_dir, db_dir)
     db = Database(os.path.join(db_dir, "behavior_box.db"))
     db.open()
     event_store = EventStore(db)
-    set_experiments_root(os.path.join(PROJECT_ROOT, "data", "experiments"))
+    set_experiments_root(os.path.join(PROJECT_ROOT, "data_store", "experiments"))
     yield
     if engine:
         await engine.stop()
@@ -77,6 +80,41 @@ async def lifespan(app_instance):
         await bus.stop_all()
     if db:
         db.close()
+
+
+def _auto_migrate_if_needed(old_dir: str, new_dir: str):
+    """启动时自动迁移：如果新目录为空但旧目录有运行时数据，自动复制到新目录"""
+    import shutil
+    new_items = os.listdir(new_dir)
+    if new_items:
+        return  # data_store/ 已有数据，不需迁移
+    if not os.path.isdir(old_dir):
+        return  # 旧目录不存在
+    old_items = [f for f in os.listdir(old_dir)
+                 if os.path.isfile(os.path.join(old_dir, f)) and not f.endswith(".py")]
+    if not old_items and not os.path.isdir(os.path.join(old_dir, "experiments")):
+        return  # 旧目录无可迁移数据
+    logger.info("检测到 data_store/ 为空，从 data/ 自动迁移运行时数据...")
+    # 复制根目录的非 .py 文件
+    for f in old_items:
+        src = os.path.join(old_dir, f)
+        dst = os.path.join(new_dir, f)
+        shutil.copy2(src, dst)
+    # 复制 experiments/ 目录
+    old_exp = os.path.join(old_dir, "experiments")
+    new_exp = os.path.join(new_dir, "experiments")
+    if os.path.isdir(old_exp):
+        os.makedirs(new_exp, exist_ok=True)
+        for item in os.listdir(old_exp):
+            src = os.path.join(old_exp, item)
+            dst = os.path.join(new_exp, item)
+            if os.path.isdir(src):
+                if os.path.exists(dst):
+                    shutil.rmtree(dst)
+                shutil.copytree(src, dst)
+            else:
+                shutil.copy2(src, dst)
+    logger.info("自动迁移完成，旧 data/ 目录保留不变")
 
 
 app = FastAPI(title="行为学训练盒", lifespan=lifespan)
@@ -128,8 +166,15 @@ async def api_status():
 
 
 @app.post("/api/experiment/start-mock")
-async def api_start_mock(count: int = 10, subject_id: str = "", exp_name: str = "", notes: str = "", max_duration_min: int = 0, experiment_id: str = ""):
+async def api_start_mock(data: dict = None, count: int = 10, subject_id: str = "", exp_name: str = "", notes: str = "", max_duration_min: int = 0, experiment_id: str = ""):
     global bus, engine, session, _experiment_active
+    if data:
+        count = data.get("count", count)
+        subject_id = data.get("subject_id", subject_id)
+        exp_name = data.get("exp_name", exp_name)
+        notes = data.get("notes", notes)
+        max_duration_min = data.get("max_duration_min", max_duration_min)
+        experiment_id = data.get("experiment_id", experiment_id)
     if count < 1 and max_duration_min < 1:
         raise HTTPException(400, "触发次数和运行时间至少有一个必须大于 0")
     async with _mutex:
@@ -193,7 +238,7 @@ async def api_start_mock(count: int = 10, subject_id: str = "", exp_name: str = 
                 raw_events = event_store.get_events(s.id)
                 processor = DataProcessor()
                 structured = processor.to_structured(processor.process(raw_events), session_id=s.id, subject_id=subject_id, session_name=safe_name)
-                csv_path = export_session_csv(structured, s.id, os.path.join(PROJECT_ROOT, "data"), subject_id=subject_id, session_name=safe_name)
+                csv_path = export_session_csv(structured, s.id, os.path.join(PROJECT_ROOT, "data_store"), subject_id=subject_id, session_name=safe_name)
                 await broadcast({"type": "mock_complete", "session_id": s.id, "event_count": len(raw_events), "csv_path": csv_path})
             except Exception as exc:
                 logger.exception(f"实验运行异常: {exc}")
@@ -263,7 +308,7 @@ async def api_session_export(session_id: str):
 
 @app.get("/api/flows")
 async def api_flows():
-    flows_dir = os.path.join(PROJECT_ROOT, "data")
+    flows_dir = os.path.join(PROJECT_ROOT, "data_store")
     flows = []
     for f in os.listdir(flows_dir):
         if f.endswith(".json") and f.startswith("flow_"):
@@ -285,7 +330,7 @@ async def api_save_flow(data: dict):
     flow_data = data.get("flow", {})
     safe_name = _safe_filename(name)
     filename = f"flow_{safe_name}_{int(time.time())}.json"
-    path = os.path.join(PROJECT_ROOT, "data", filename)
+    path = os.path.join(PROJECT_ROOT, "data_store", filename)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(flow_data, f, ensure_ascii=False, indent=2)
     return {"filename": filename}
@@ -293,7 +338,7 @@ async def api_save_flow(data: dict):
 
 @app.get("/api/flows/{filename}")
 async def api_load_flow(filename: str):
-    path = os.path.join(PROJECT_ROOT, "data", filename)
+    path = os.path.join(PROJECT_ROOT, "data_store", filename)
     if not os.path.exists(path):
         raise HTTPException(404, "流程文件不存在")
     with open(path, "r", encoding="utf-8") as f:
@@ -382,7 +427,7 @@ async def api_run_flow(data: dict):
                 raw = event_store.get_events(s.id)
                 processor = DataProcessor()
                 structured = processor.to_structured(processor.process(raw), session_id=s.id, subject_id=subject_id, session_name=safe_name)
-                csv_path = export_session_csv(structured, s.id, os.path.join(PROJECT_ROOT, "data"), subject_id=subject_id, session_name=safe_name)
+                csv_path = export_session_csv(structured, s.id, os.path.join(PROJECT_ROOT, "data_store"), subject_id=subject_id, session_name=safe_name)
                 await broadcast({"type": "flow_complete", "session_id": s.id, "event_count": len(raw), "csv_path": csv_path})
             except Exception as exc:
                 logger.exception(f"流程实验异常: {exc}")
@@ -464,6 +509,8 @@ async def api_camera_event(data: dict):
             signal_id=signal_id,
             raw_payload={"zone": zone, "event": event, "experiment_id": experiment_id},
         )
+        event_store._db.execute("UPDATE sessions SET event_count = event_count + 1 WHERE id = ?", (session_key,))
+        event_store._db.commit()
     if engine and engine.is_running and _loop:
         from protocol.signal_source import SignalEvent, SourceType
         sig = SignalEvent(
@@ -485,29 +532,37 @@ async def api_create_experiment(data: dict):
     hardware_count = data.get("hardware_count", 0)
     if hardware_count < 0 or hardware_count > 8:
         raise HTTPException(400, "设备数量必须在 0~8 之间")
-    exp_id = create_experiment(
-        name=data.get("name", ""),
-        subject_id=data.get("subject_id", ""),
-        species=data.get("species", ""),
-        subject_notes=data.get("subject_notes", ""),
-        notes=data.get("notes", ""),
-        max_duration_min=data.get("max_duration_min", 30),
-        max_trigger_count=data.get("max_trigger_count", 50),
-        trigger_manual=data.get("trigger_manual", True),
-        trigger_camera=data.get("trigger_camera", False),
-        trigger_hardware=data.get("trigger_hardware", False),
-        hardware_count=hardware_count,
-        camera_zones=data.get("camera_zones", []),
-        start_mode=data.get("start_mode", "manual"),
-        timer_config=data.get("timer_config", {}),
-        save_path=data.get("save_path", ""),
-    )
+    try:
+        exp_id = create_experiment(
+            name=data.get("name", ""),
+            subject_id=data.get("subject_id", ""),
+            species=data.get("species", ""),
+            subject_notes=data.get("subject_notes", ""),
+            notes=data.get("notes", ""),
+            max_duration_min=data.get("max_duration_min", 30),
+            max_trigger_count=data.get("max_trigger_count", 50),
+            trigger_manual=data.get("trigger_manual", True),
+            trigger_camera=data.get("trigger_camera", False),
+            trigger_hardware=data.get("trigger_hardware", False),
+            hardware_count=hardware_count,
+            camera_zones=data.get("camera_zones", []),
+            start_mode=data.get("start_mode", "manual"),
+            timer_config=data.get("timer_config", {}),
+            save_path=data.get("save_path", ""),
+        )
+    except ValueError as e:
+        raise HTTPException(409, str(e))
     return {"id": exp_id}
 
 
 @app.get("/api/experiments")
 async def api_list_experiments():
     return {"experiments": list_experiments()}
+
+
+@app.get("/api/experiments/camera-statuses")
+async def api_camera_statuses():
+    return {"statuses": get_all_camera_statuses()}
 
 
 @app.get("/api/experiments/{exp_id}")
@@ -528,6 +583,15 @@ async def api_experiment_sessions(exp_id: str):
     return {"sessions": sessions}
 
 
+@app.post("/api/experiments/batch-delete")
+async def api_batch_delete_experiments(data: dict):
+    exp_ids = data.get("experiment_ids", [])
+    if not exp_ids or not isinstance(exp_ids, list):
+        raise HTTPException(400, "请提供要删除的实验 ID 列表")
+    deleted = batch_delete_experiments(exp_ids)
+    return {"deleted": deleted}
+
+
 @app.post("/api/experiments/{exp_id}")
 async def api_update_experiment(exp_id: str, data: dict):
     ok = update_experiment(exp_id, data)
@@ -546,7 +610,10 @@ async def api_delete_experiment(exp_id: str):
 
 @app.post("/api/experiments/{exp_id}/clone")
 async def api_clone_experiment(exp_id: str, data: dict):
-    new_id = clone_experiment(exp_id, data.get("new_name", ""))
+    try:
+        new_id = clone_experiment(exp_id, data.get("new_name", ""))
+    except ValueError as e:
+        raise HTTPException(409, str(e))
     if not new_id:
         raise HTTPException(404, "源实验不存在")
     return {"id": new_id}
@@ -573,15 +640,21 @@ async def api_browse_folder():
 
     if platform.system() == "Darwin":
         try:
-            result = subprocess.run(
-                ["osascript", "-e",
-                 'set folderPath to choose folder with prompt "选择实验保存位置:"\n'
-                 "return POSIX path of folderPath"],
-                capture_output=True, text=True, timeout=120,
+            proc = await asyncio.create_subprocess_exec(
+                "osascript", "-e",
+                'set folderPath to choose folder with prompt "选择实验保存位置:"\n'
+                "return POSIX path of folderPath",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            if result.returncode == 0:
-                return {"path": result.stdout.strip()}
-        except (subprocess.TimeoutExpired, FileNotFoundError):
+            try:
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=120)
+                if proc.returncode == 0:
+                    return {"path": stdout.decode().strip()}
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+        except (FileNotFoundError, Exception):
             pass
 
     # 非 macOS 或 osascript 失败：尝试 tkinter
@@ -646,7 +719,7 @@ async def api_camera_load_config(experiment_id: str = None):
 async def api_list_sources(experiment_id: str = None):
     """返回所有可用信号源列表（供流程编辑器 TRIGGER 节点下拉）"""
     sources = []
-    sources.append({"id": "生成信号", "label": "程序生成信号（无硬件时测试用）", "type": "mock"})
+    sources.append({"id": "生成信号", "label": "模拟信号（测试用）", "type": "mock"})
     sources.append({"id": "硬件传感器", "label": "硬件传感器（控制盒）", "type": "hardware"})
     zones_config = _load_camera_config(experiment_id).get("zones", [])
     for z in zones_config:

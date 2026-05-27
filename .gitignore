@@ -31,6 +31,13 @@ software/data/*.csv
 software/data/*.json
 !software/data/__init__.py
 
+software/data_store/behavior_box.db
+software/data_store/behavior_box.db-shm
+software/data_store/behavior_box.db-wal
+software/data_store/*.csv
+software/data_store/camera_config.json
+software/data_store/experiments/
+
 # Syncthing
 .stignore
 

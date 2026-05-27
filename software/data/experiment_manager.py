@@ -1,7 +1,7 @@
 """
 实验管理器 — 每个实验是一个自包含文件夹
 
-data/experiments/{实验名称}/
+data_store/experiments/{实验名称}/
 ├── experiment.json   ← 实验配置
 ├── flow.json         ← 关联流程
 ├── camera.json       ← 摄像头配置（可选）
@@ -85,6 +85,10 @@ def create_experiment(
     timer_config: dict = None,
     save_path: str = "",
 ) -> str:
+    for exp in list_experiments():
+        if exp.get("name") == name:
+            raise ValueError(f"同名实验「{name}」已存在，请使用不同的实验名称")
+
     exp_id = f"exp_{uuid.uuid4().hex[:12]}"
     safe = _safe_folder_name(name or exp_id)
     if save_path:
@@ -211,13 +215,59 @@ def delete_experiment(exp_id: str) -> bool:
     return True
 
 
+def batch_delete_experiments(exp_ids: List[str]) -> int:
+    deleted = 0
+    for exp_id in exp_ids:
+        try:
+            if delete_experiment(exp_id):
+                deleted += 1
+        except Exception:
+            continue
+    return deleted
+
+
+def get_camera_config_status(exp_id: str) -> str:
+    """return 'completed', 'pending', or 'disabled'"""
+    exp = get_experiment(exp_id)
+    if not exp:
+        return 'disabled'
+    if not exp.get("trigger_camera", False):
+        return 'disabled'
+    folder = exp.get("_folder", "")
+    if not folder:
+        return 'disabled'
+    cam_path = os.path.join(folder, "camera.json")
+    if not os.path.isfile(cam_path):
+        return 'pending'
+    try:
+        with open(cam_path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except Exception:
+        return 'pending'
+    zones = cfg.get("zones", [])
+    if len(zones) > 0:
+        return 'completed'
+    return 'pending'
+
+
+def get_all_camera_statuses() -> dict:
+    statuses = {}
+    for exp in list_experiments():
+        statuses[exp["id"]] = get_camera_config_status(exp["id"])
+    return statuses
+
+
 def clone_experiment(exp_id: str, new_name: str) -> Optional[str]:
     exp = get_experiment(exp_id)
     if not exp:
         return None
+    name = new_name or (exp["name"] + "_副本")
+    for e in list_experiments():
+        if e.get("name") == name and e.get("id") != exp_id:
+            raise ValueError(f"同名实验「{name}」已存在，请使用不同的实验名称")
     folder = exp["_folder"]
     new_id = f"exp_{uuid.uuid4().hex[:12]}"
-    new_folder = _experiment_path(new_name or (exp["name"] + "_副本"))
+    new_folder = _experiment_path(name)
     os.makedirs(new_folder, exist_ok=True)
     os.makedirs(os.path.join(new_folder, "exports"), exist_ok=True)
 
@@ -228,7 +278,7 @@ def clone_experiment(exp_id: str, new_name: str) -> Optional[str]:
 
     new_cfg = dict(exp)
     new_cfg["id"] = new_id
-    new_cfg["name"] = new_name or (exp["name"] + "_副本")
+    new_cfg["name"] = name
     new_cfg["created_at"] = int(time.time() * 1000)
     new_cfg["updated_at"] = int(time.time() * 1000)
     del new_cfg["_folder"]
