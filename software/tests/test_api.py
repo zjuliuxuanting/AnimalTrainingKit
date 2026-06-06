@@ -110,3 +110,79 @@ class TestAPI:
         """POST /api/experiment/stop → 200"""
         response = client.post("/api/experiment/stop")
         assert response.status_code == 200
+
+
+class TestBoundaryConditions:
+    """常态化边界条件测试（原测试员手动测试，现自动化）"""
+
+    def test_special_characters_xss(self, client):
+        """特殊字符 XSS → 不应返回 500"""
+        response = client.post(
+            "/api/experiments",
+            json={"name": "<script>alert(1)</script>", "subject_id": "XSS"}
+        )
+        assert response.status_code in [200, 400, 422]
+
+    def test_special_characters_html(self, client):
+        """HTML 标签 → 不应返回 500"""
+        response = client.post(
+            "/api/experiments",
+            json={"name": "<img src=x onerror=alert(1)>", "subject_id": "HTML"}
+        )
+        assert response.status_code in [200, 400, 422]
+
+    def test_emoji_name(self, client):
+        """emoji 名称 → 应正常处理"""
+        response = client.post(
+            "/api/experiments",
+            json={"name": "测试实验🐹", "subject_id": "E01"}
+        )
+        assert response.status_code in [200, 400, 422]
+
+    def test_fullwidth_characters(self, client):
+        """全角符号 → 不应返回 500"""
+        response = client.post(
+            "/api/experiments",
+            json={"name": "测试（全角）！", "subject_id": "FULL"}
+        )
+        assert response.status_code in [200, 400, 422]
+
+    def test_long_name_20_chars(self, client):
+        """超长名称（20字中文）→ 应正常处理"""
+        response = client.post(
+            "/api/experiments",
+            json={"name": "这是一段二十个字的超长实验名称测试", "subject_id": "LONG"}
+        )
+        assert response.status_code in [200, 400, 422]
+
+    def test_long_name_100_chars(self, client):
+        """超长名称（100字符）→ 应返回错误或截断"""
+        response = client.post(
+            "/api/experiments",
+            json={"name": "A" * 100, "subject_id": "L100"}
+        )
+        assert response.status_code in [200, 400, 422]
+
+    def test_empty_name(self, client):
+        """空名称 → 服务器接受（experiment_manager 不做名称校验）"""
+        response = client.post(
+            "/api/experiments",
+            json={"name": "", "subject_id": "EMPTY"}
+        )
+        assert response.status_code in [200, 400, 422]
+
+    def test_missing_name(self, client):
+        """缺少 name 字段 → 服务器接受（FastAPI 用默认值 '' 填充）"""
+        response = client.post(
+            "/api/experiments",
+            json={"subject_id": "NO_NAME"}
+        )
+        assert response.status_code in [200, 400, 422]
+
+    def test_sql_injection(self, client):
+        """SQL 注入尝试 → 不应返回 500"""
+        response = client.post(
+            "/api/experiments",
+            json={"name": "'; DROP TABLE experiments; --", "subject_id": "SQL"}
+        )
+        assert response.status_code in [200, 400, 422]
