@@ -45,3 +45,14 @@ software/data_store/experiments/
 manage.sh
 角色/
 项目/
+
+# Project
+.codex/
+.project_index*
+e2e/test-results/
+e2e/playwright-report/
+.agents/skills/local/
+.project_index.json
+
+# OS
+Thumbs.db
