@@ -154,6 +154,11 @@ async def index():
     return FileResponse(os.path.join(PROJECT_ROOT, "web", "index.html"))
 
 
+@app.get("/dashboard")
+async def dashboard():
+    return FileResponse(os.path.join(PROJECT_ROOT, "web", "project-dashboard.html"))
+
+
 @app.get("/api/status")
 async def api_status():
     return {
@@ -182,6 +187,17 @@ async def api_start_mock(data: dict = None, count: int = 10, subject_id: str = "
     async with _mutex:
         if _experiment_active:
             raise HTTPException(400, "实验正在运行中，请先停止")
+
+        # Bug #6: Stop any existing engine/bus/session before overwriting
+        if engine:
+            await engine.stop()
+        if bus:
+            try:
+                await bus.stop_all()
+            except Exception:
+                pass
+        if session:
+            session.stop()
 
         duration_s = max_duration_min * 60 if max_duration_min > 0 else (count * 1.8 if count > 0 else 30) + 5
         s = Session()
@@ -341,6 +357,10 @@ def _safe_filename(name: str) -> str:
 @app.post("/api/flows/save")
 async def api_save_flow(data: dict):
     name = data.get("name", "unnamed")
+    # Bug #9: Reject whitespace-only names
+    if not name or not name.strip():
+        raise HTTPException(400, "请输入流程名称")
+    name = name.strip()
     flow_data = data.get("flow", {})
     safe_name = _safe_filename(name)
     filename = f"flow_{safe_name}_{int(time.time())}.json"
@@ -350,9 +370,27 @@ async def api_save_flow(data: dict):
     return {"filename": filename}
 
 
+def _safe_load_filename(filename: str) -> str:
+    """Validate filename for loading — prevent path traversal attacks.
+
+    CR-7: Reject filenames containing '../' or other path traversal patterns.
+    Only allow filenames matching the expected pattern: flow_*.json
+    """
+    import re
+    # Must match expected flow filename pattern
+    if not re.match(r'^flow_[\w\u4e00-\u9fff\-]+_\d+\.json$', filename):
+        raise HTTPException(400, "无效的文件名")
+    # Additional safety: resolve to absolute path and verify it's under data_store
+    safe = os.path.normpath(filename)
+    if '..' in safe or safe.startswith('/'):
+        raise HTTPException(400, "无效的文件名")
+    return safe
+
+
 @app.get("/api/flows/{filename}")
 async def api_load_flow(filename: str):
-    path = os.path.join(PROJECT_ROOT, "data_store", filename)
+    safe_filename = _safe_load_filename(filename)
+    path = os.path.join(PROJECT_ROOT, "data_store", safe_filename)
     if not os.path.exists(path):
         raise HTTPException(404, "流程文件不存在")
     with open(path, "r", encoding="utf-8") as f:
@@ -363,7 +401,9 @@ async def api_load_flow(filename: str):
 async def api_validate_flow(data: dict):
     try:
         flow = FlowGraph.from_dict(data)
-        result = validate_flow(flow)
+        # Gather available signal IDs for semantic validation (Bug #7)
+        available_signals = [s["id"] for s in _get_available_sources()]
+        result = validate_flow(flow, available_signals=available_signals)
         return {"valid": result.valid, "errors": result.errors, "warnings": result.warnings}
     except Exception as e:
         return {"valid": False, "errors": [str(e)], "warnings": []}
@@ -373,6 +413,16 @@ async def api_validate_flow(data: dict):
 async def api_run_flow(data: dict):
     global bus, engine, session, _experiment_active
     flow_data = data.get("flow", {})
+    experiment_id = data.get("experiment_id", "")
+
+    # G3-FIN-1: 如果提供了 experiment_id 且 flow 为空，从实验文件夹加载流程
+    if experiment_id and not flow_data:
+        loaded = load_flow(experiment_id)
+        if loaded:
+            flow_data = loaded
+        else:
+            raise HTTPException(400, "实验没有关联的流程，请先保存流程")
+
     duration_s = data.get("duration", 30)
     subject_id = data.get("subject_id", "")
     exp_name = data.get("exp_name", "")
@@ -386,13 +436,29 @@ async def api_run_flow(data: dict):
     except Exception as e:
         raise HTTPException(400, f"流程解析失败: {e}")
 
-    result = validate_flow(flow)
+    available_signals = [s["id"] for s in _get_available_sources()]
+    result = validate_flow(flow, available_signals=available_signals)
     if not result.valid:
         raise HTTPException(400, f"流程校验失败: {result.errors}")
+
+    # Bug #6: Check before entering mutex (fast path)
+    if _experiment_active:
+        raise HTTPException(400, "实验正在运行中，请先停止")
 
     async with _mutex:
         if _experiment_active:
             raise HTTPException(400, "实验正在运行中，请先停止")
+
+        # Bug #6: Stop any existing engine/bus/session before overwriting
+        if engine:
+            await engine.stop()
+        if bus:
+            try:
+                await bus.stop_all()
+            except Exception:
+                pass
+        if session:
+            session.stop()
 
         s = Session()
         config = ExperimentConfig(name=safe_name, description="流程实验", session_timeout_ms=duration_s * 2000, flow=flow)
@@ -598,6 +664,11 @@ async def api_get_experiment(exp_id: str):
     folder = exp.get("_folder", "")
     if folder:
         exp["folder_path"] = folder
+    # D-30: 预加载摄像头信号源到注册中心
+    from protocol.device_registry import load_camera_sources
+    camera_config = _load_camera_config(exp_id)
+    if camera_config:
+        load_camera_sources(exp_id, camera_config)
     return exp
 
 
@@ -652,6 +723,28 @@ async def api_open_experiment_folder(exp_id: str):
     if folder and os.path.isdir(folder):
         subprocess.Popen(["open", folder])
     return {"ok": True}
+
+
+@app.post("/api/experiments/{exp_id}/flow/save")
+async def api_save_experiment_flow(exp_id: str, data: dict):
+    """保存流程到实验文件夹 (flow.json)，模仿 camera.json 设计模式（D-21）"""
+    flow_data = data.get("flow", {})
+    if not flow_data:
+        raise HTTPException(400, "流程数据不能为空")
+    ok = save_flow(exp_id, flow_data)
+    if not ok:
+        raise HTTPException(404, "实验不存在")
+    return {"ok": True}
+
+
+@app.get("/api/experiments/{exp_id}/flow/load")
+async def api_load_experiment_flow(exp_id: str):
+    """从实验文件夹加载流程 (flow.json)"""
+    flow = load_flow(exp_id)
+    if flow is None:
+        # 返回空流程（含默认 START/END），不报错
+        return {"nodes": {}, "edges": []}
+    return flow
 
 
 # === 目录选择器 ===
@@ -780,23 +873,104 @@ async def api_camera_load_background(experiment_id: str = None):
     return FileResponse(path, media_type="image/png")
 
 
+def _get_available_sources(experiment_id: str | None = None) -> list[dict]:
+    """获取可用信号源列表（从注册中心读取，供校验器和 API 共用）
+
+    D-30: 统一从注册中心读取，不再硬编码。支持：
+    - 内置 mock/timer 信号源
+    - 摄像头 zone 自动注册的信号源
+    - 硬件设备注册的信号源
+    """
+    from protocol.device_registry import get_registry, load_camera_sources
+    eid = experiment_id or ""
+    reg = get_registry(eid)
+
+    # 自动加载该实验的摄像头配置信号源
+    if eid:
+        camera_config = _load_camera_config(eid)
+        if camera_config:
+            load_camera_sources(eid, camera_config)
+
+    entries = reg.get_all_sources(eid)
+    result = []
+    for e in entries:
+        result.append({"id": e.source_id, "label": e.display_name, "type": e.source_type})
+        for sig in e.produced_signals:
+            result.append({"id": sig, "label": f"{e.display_name}:{sig}", "type": e.source_type})
+    return result
+
+
 @app.get("/api/sources")
 async def api_list_sources(experiment_id: str = None):
-    """返回所有可用信号源列表（供流程编辑器 TRIGGER 节点下拉）"""
-    sources = []
-    sources.append({"id": "生成信号", "label": "模拟信号（测试用）", "type": "mock"})
-    sources.append({"id": "硬件传感器", "label": "硬件传感器（控制盒）", "type": "hardware"})
-    zones_config = _load_camera_config(experiment_id).get("zones", [])
-    for z in zones_config:
-        name = z.get("name", "区域")
-        sources.append({"id": f"camera:{name}:enter", "label": f"摄像头 - {name} - 进入", "type": "camera"})
-        sources.append({"id": f"camera:{name}:leave", "label": f"摄像头 - {name} - 离开", "type": "camera"})
-    return {"sources": sources}
+    """返回所有可用信号源列表（从注册中心读取）"""
+    return {"sources": _get_available_sources(experiment_id)}
+
+
+# === D-30 注册中心 API ===
+
+
+@app.get("/api/registry/sources")
+async def api_registry_sources(experiment_id: str = None):
+    """获取所有信号源（含详细信息）"""
+    from protocol.device_registry import get_registry
+    reg = get_registry(experiment_id or "")
+    return {"entries": [{
+        "source_id": e.source_id,
+        "display_name": e.display_name,
+        "source_type": e.source_type,
+        "status": e.status.value,
+        "produced_signals": e.produced_signals,
+    } for e in reg.get_all_sources(experiment_id or "")]}
+
+
+@app.get("/api/registry/actuators")
+async def api_registry_actuators(experiment_id: str = None):
+    """获取所有执行器（供 EXECUTE 节点下拉）"""
+    from protocol.device_registry import get_registry
+    reg = get_registry(experiment_id or "")
+    return {"entries": [{
+        "source_id": e.source_id,
+        "display_name": e.display_name,
+        "source_type": e.source_type,
+    } for e in reg.get_all_actuators(experiment_id or "")]}
+
+
+@app.get("/api/registry/events")
+async def api_registry_events(experiment_id: str = None):
+    """获取所有记录事件类型（供 RECORD 节点下拉）"""
+    from protocol.device_registry import get_registry
+    reg = get_registry(experiment_id or "")
+    return {"entries": [{
+        "source_id": e.source_id,
+        "display_name": e.display_name,
+    } for e in reg.get_all_event_types(experiment_id or "")]}
 
 
 @app.get("/api/stats/daily")
 async def api_daily_stats(days: int = 7):
     return {"stats": event_store.get_daily_aggregation("", days=days)}
+
+
+@app.get("/api/dashboard/data")
+async def api_dashboard_data():
+    """返回项目仪表盘的实时数据"""
+    import subprocess
+    try:
+        script_path = os.path.join(PROJECT_ROOT, "scripts", "dashboard_data.py")
+        result = subprocess.run(
+            [sys.executable, script_path],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            return json.loads(result.stdout)
+        return {
+            "error": f"Dashboard script error (exit {result.returncode})",
+            "stderr": result.stderr[:500],
+        }
+    except subprocess.TimeoutExpired:
+        return {"error": "Dashboard script timed out"}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 def main():

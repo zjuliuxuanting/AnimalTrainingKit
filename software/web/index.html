@@ -169,6 +169,7 @@
 
 <!-- Tab: Flow Editor -->
 <div class="tab-content" id="tab-flow">
+  <div id="flowExpBadge" style="display:none;background:#FFF3CD;color:#856404;padding:6px 12px;border-radius:6px;margin-bottom:8px;font-size:13px;font-weight:500">📋 请先在实验管理中「编辑」一个实验</div>
   <div class="card">
     <div class="flex" style="justify-content:space-between;align-items:center">
       <h3 style="margin:0">实验流程编辑器</h3>
@@ -178,36 +179,56 @@
         <button class="btn btn-success btn-sm" onclick="saveFlow()">💾 保存流程</button>
         <button class="btn btn-primary btn-sm" onclick="loadFlow()">📂 加载流程</button>
         <button class="btn btn-warning btn-sm" onclick="validateFlow()">✓ 校验</button>
-        <button class="btn btn-primary btn-sm" onclick="runFlow()">▶ 运行流程</button>
+        <button class="btn btn-primary btn-sm" id="btnRunFlow" onclick="runFlow()">▶ 运行流程</button>
       </div>
     </div>
     <p style="margin-top:8px;color:var(--text-secondary);font-size:12px">💡 从左侧拖拽节点到画布，连接节点来编排实验流程。开始和结束节点已固定在画布上。</p>
   </div>
-  <div class="grid-2" style="grid-template-columns: 140px 1fr;">
+  <div class="grid-3" style="grid-template-columns: 140px 1fr 300px; gap: 12px;position:relative">
+    <!-- 左侧：节点面板 -->
     <div class="card" style="padding:8px">
       <h3 style="font-size:12px;margin-bottom:8px">节点面板</h3>
       <div id="nodePalette">
-        <div class="palette-item" data-type="trigger">⚡ 触发（等待信号）</div>
+        <!-- TRIGGER group (orange) -->
+        <div class="palette-group-label" style="font-size:10px;color:#999;padding:4px 0 2px 0;text-transform:uppercase;letter-spacing:0.5px">信号输入</div>
+        <div class="palette-item" data-type="trigger">⚡ 触发信号</div>
+        <!-- CONTROL group (purple/blue) -->
+        <div class="palette-group-label" style="font-size:10px;color:#999;padding:8px 0 2px 0;text-transform:uppercase;letter-spacing:0.5px">流程控制</div>
         <div class="palette-item" data-type="delay">⏱ 延时等待</div>
         <div class="palette-item" data-type="condition">🔀 条件判断</div>
-        <div class="palette-item" data-type="execute">🛠 执行动作</div>
         <div class="palette-item" data-type="loop">🔄 循环</div>
-        <div class="palette-item" data-type="variable">📦 变量操作</div>
+        <!-- EXECUTE group (green) -->
+        <div class="palette-group-label" style="font-size:10px;color:#999;padding:8px 0 2px 0;text-transform:uppercase;letter-spacing:0.5px">动作执行</div>
+        <div class="palette-item" data-type="execute">🛠 执行动作</div>
         <div class="palette-item" data-type="record">📝 记录事件</div>
+        <div class="palette-item" data-type="record_end">⏹ 记录终止</div>
+        <!-- LOGIC group (grey) -->
+        <div class="palette-group-label" style="font-size:10px;color:#999;padding:8px 0 2px 0;text-transform:uppercase;letter-spacing:0.5px">逻辑运算</div>
+        <div class="palette-item" data-type="and">📦 逻辑与</div>
+        <div class="palette-item" data-type="not">❌ 逻辑非</div>
+        <div class="palette-item" data-type="fork">🔀 逻辑分叉</div>
+        <!-- SPECIAL group -->
+        <div class="palette-group-label" style="font-size:10px;color:#999;padding:8px 0 2px 0;text-transform:uppercase;letter-spacing:0.5px">特殊</div>
+        <div class="palette-item" data-type="sniffer">👁 旁路探针</div>
       </div>
     </div>
+    <!-- 中间：画布 -->
     <div class="card" style="padding:0;overflow:hidden">
       <div id="flowCanvas" style="width:100%;height:500px;position:relative;background:#fafafa;border:1px solid var(--border);border-radius:6px;overflow:hidden">
         <svg id="flowSvg" style="width:100%;height:100%;position:absolute;top:0;left:0;pointer-events:none"></svg>
         <div id="flowNodes" style="position:relative;z-index:1"></div>
       </div>
     </div>
-  </div>
-  <div class="card" id="flowConfigPanel" style="display:none">
-    <h3>节点参数设置</h3>
-    <div class="grid-2" id="flowConfigForm">
-      <div class="form-group"><label>节点名称</label><input id="cfgLabel" onchange="updateNodeConfig()"></div>
-      <div class="form-group" id="cfgExtra"></div>
+    <!-- 右侧：配置面板 -->
+    <div class="card" id="flowConfigPanel" style="display:none;max-height:520px;overflow-y:auto">
+      <h3 style="font-size:14px;margin:0 0 12px 0">节点参数设置</h3>
+      <div id="flowConfigForm">
+        <div class="form-group">
+          <label>节点名称</label>
+          <input id="cfgLabel" onchange="updateNodeConfig()">
+        </div>
+        <div class="form-group" id="cfgExtra"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -254,6 +275,12 @@
 <!-- Tab: Camera -->
 <div class="tab-content" id="tab-camera">
   <div id="cameraExpBadge" style="display:none;background:#E3F2FD;color:#1565C0;padding:6px 12px;border-radius:6px;margin-bottom:8px;font-size:13px;font-weight:500"></div>
+  <div id="cameraContentWrapper" style="position:relative">
+    <!-- 灰色覆盖层：无实验或无摄像头时显示 -->
+    <div id="cameraOverlay" class="editor-overlay" style="display:none">
+      <div class="editor-overlay-icon">📷</div>
+      <div class="editor-overlay-text" id="cameraOverlayText">请先在实验管理中「编辑」或「启动」一个启用了摄像头的实验</div>
+    </div>
   <div class="card">
     <div class="camera-step-indicator" id="cameraSteps">
       <div class="camera-step-dot active" data-step="0">1</div>
@@ -467,6 +494,7 @@
     <h3>检测日志</h3>
     <div class="event-log" id="camEventLog" style="height:200px">等待检测开始...</div>
   </div>
+  </div><!-- close cameraContentWrapper -->
 </div>
 
 <!-- Tab: Device -->
@@ -486,9 +514,11 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-<script src="/static/js/app.js?v=3"></script>
-<script src="/static/js/flow-editor.js?v=2"></script>
-<script src="/static/js/charts.js?v=2"></script>
-<script src="/static/js/camera.js?v=2"></script>
+<script src="/static/js/flow-model.js?v=5"></script>
+<script src="/static/js/flow-canvas.js?v=5"></script>
+<script src="/static/js/flow-editor.js?v=5"></script>
+<script src="/static/js/app.js?v=5"></script>
+<script src="/static/js/charts.js?v=3"></script>
+<script src="/static/js/camera.js?v=5"></script>
 </body>
 </html>

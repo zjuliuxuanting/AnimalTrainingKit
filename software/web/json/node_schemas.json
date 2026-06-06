@@ -1,0 +1,405 @@
+{
+  "NODE_SCHEMAS": {
+    "start": {
+      "label": "开始",
+      "color": "#4C9B50",
+      "icon": "🔴",
+      "fields": [],
+      "help": "流程入口。一个流程有且仅有一个开始节点。",
+      "ports": {
+        "inputs": 0,
+        "outputs": 1
+      }
+    },
+    "end": {
+      "label": "结束",
+      "color": "#D32F2F",
+      "icon": "⏹",
+      "fields": [],
+      "help": "流程出口。流程执行完毕或手动终止时到达此节点。",
+      "ports": {
+        "inputs": -1,
+        "outputs": 0
+      }
+    },
+    "trigger": {
+      "label": "触发信号",
+      "color": "#FF9800",
+      "icon": "⚡",
+      "fields": [
+        {
+          "type": "select",
+          "options": "dynamic",
+          "required": true,
+          "help": "信号源 ID，从可用的摄像头区域/硬件传感器中选择",
+          "key": "signal_id"
+        }
+      ],
+      "help": "选择信号来源。当该信号源检测到事件时，流程从这里开始执行。",
+      "ports": {
+        "inputs": -1,
+        "outputs": 1
+      }
+    },
+    "delay": {
+      "label": "延时等待",
+      "color": "#7C4DFF",
+      "icon": "⏱",
+      "fields": [
+        {
+          "type": "number",
+          "min": 0.1,
+          "max": 3600,
+          "step": 0.1,
+          "default": 1.0,
+          "unit": "秒",
+          "required": true,
+          "help": "持续时间，单位秒",
+          "key": "duration_s"
+        }
+      ],
+      "help": "流程执行到此节点时暂停指定时长。默认 1 秒，范围 0.1 秒 ~ 1 小时。",
+      "ports": {
+        "inputs": -1,
+        "outputs": 1
+      }
+    },
+    "condition": {
+      "label": "条件判断",
+      "color": "#5C6BC0",
+      "icon": "🔀",
+      "fields": [
+        {
+          "type": "select",
+          "options": [
+            {
+              "value": "trigger_count",
+              "label": "TRIGGER 累计计数"
+            },
+            {
+              "value": "counter",
+              "label": "指定计数器"
+            }
+          ],
+          "default": "trigger_count",
+          "required": true,
+          "help": "条件判断数据来源：TRIGGER 上游累计数或指定计数器",
+          "key": "source"
+        },
+        {
+          "type": "select",
+          "options": [
+            {
+              "value": "eq",
+              "label": "等于"
+            },
+            {
+              "value": "neq",
+              "label": "不等于"
+            },
+            {
+              "value": "gt",
+              "label": "大于"
+            },
+            {
+              "value": "lt",
+              "label": "小于"
+            },
+            {
+              "value": "gte",
+              "label": "大于等于"
+            },
+            {
+              "value": "lte",
+              "label": "小于等于"
+            }
+          ],
+          "default": "gt",
+          "required": true,
+          "help": "比较运算符",
+          "key": "operator"
+        },
+        {
+          "type": "number",
+          "min": 0,
+          "max": 999999,
+          "default": 0,
+          "required": true,
+          "help": "比较阈值",
+          "key": "value"
+        }
+      ],
+      "help": "根据上游数据做条件判断。source 选择数据来源（TRIGGER 累计计数或计数器），operator 选择比较方式，value 设置阈值。",
+      "ports": {
+        "inputs": 1,
+        "outputs": 2,
+        "output_labels": [
+          "真",
+          "假"
+        ],
+        "output_ports": [
+          "true",
+          "false"
+        ]
+      }
+    },
+    "execute": {
+      "label": "执行动作",
+      "color": "#43A047",
+      "icon": "🛠",
+      "fields": [
+        {
+          "type": "select",
+          "options": "dynamic",
+          "required": true,
+          "help": "执行器 ID，从注册中心加载",
+          "key": "actuator_id"
+        },
+        {
+          "type": "select",
+          "options": [
+            {
+              "value": "high",
+              "label": "开启"
+            },
+            {
+              "value": "low",
+              "label": "关闭"
+            }
+          ],
+          "default": "high",
+          "required": true,
+          "help": "动作类型",
+          "key": "action"
+        }
+      ],
+      "help": "调用指定执行器执行动作。开启/关闭模式，具体参数由硬件模块自管。",
+      "ports": {
+        "inputs": -1,
+        "outputs": 1
+      }
+    },
+    "loop": {
+      "label": "循环",
+      "color": "#7C4DFF",
+      "icon": "🔄",
+      "fields": [
+        {
+          "type": "number",
+          "min": 1,
+          "max": 10000,
+          "default": 10,
+          "required": true,
+          "help": "最大循环次数",
+          "key": "max_iterations"
+        },
+        {
+          "type": "number",
+          "min": 1,
+          "max": 3600,
+          "step": 1,
+          "default": 60,
+          "unit": "秒",
+          "required": true,
+          "help": "超时时间，单位秒；0 表示不启用超时",
+          "key": "timeout_s"
+        }
+      ],
+      "help": "循环执行，最多循环 max_iterations 次或超时 timeout_s 秒。",
+      "ports": {
+        "inputs": 1,
+        "outputs": 2,
+        "output_labels": [
+          "循环体",
+          "退出"
+        ],
+        "output_ports": [
+          "body",
+          "exit"
+        ]
+      }
+    },
+    "and": {
+      "label": "逻辑与",
+      "color": "#78909C",
+      "icon": "📦",
+      "fields": [],
+      "help": "所有输入端口都收到信号后才触发输出。用于多路径汇聚。",
+      "ports": {
+        "inputs": -1,
+        "outputs": 1
+      }
+    },
+    "not": {
+      "label": "逻辑非",
+      "color": "#B0BEC5",
+      "icon": "❑",
+      "fields": [
+        {
+          "type": "select",
+          "options": "dynamic",
+          "required": true,
+          "help": "信号源 ID，从可用的摄像头区域/硬件传感器中选择",
+          "key": "signal_id"
+        },
+        {
+          "type": "number",
+          "min": 1,
+          "max": 3600,
+          "step": 1,
+          "default": 60,
+          "unit": "秒",
+          "required": true,
+          "help": "超时时间，单位秒；0 表示不启用超时",
+          "key": "timeout_s"
+        }
+      ],
+      "help": "等待信号消失后放行：在超时上限内持续检测指定信号源。",
+      "ports": {
+        "inputs": 1,
+        "outputs": 1
+      }
+    },
+    "fork": {
+      "label": "逻辑分叉",
+      "color": "#90A4AE",
+      "icon": "🔁",
+      "fields": [],
+      "help": "同时触发下游两条路径。无配置参数。两路完全独立。",
+      "ports": {
+        "inputs": 1,
+        "outputs": 2,
+        "output_labels": [
+          "继续",
+          "记录终止"
+        ],
+        "output_ports": [
+          "continue",
+          "stop"
+        ]
+      }
+    },
+    "record": {
+      "label": "记录事件",
+      "color": "#43A047",
+      "icon": "📝",
+      "fields": [
+        {
+          "type": "text",
+          "maxLength": 100,
+          "required": true,
+          "help": "事件名称",
+          "key": "event_name"
+        },
+        {
+          "type": "text",
+          "maxLength": 64,
+          "required": false,
+          "help": "计数器名称，用于累积计数操作",
+          "key": "counter_name"
+        },
+        {
+          "type": "select",
+          "options": [
+            {
+              "value": "+1",
+              "label": "+1（递增）"
+            },
+            {
+              "value": "=0",
+              "label": "=0（重置为零）"
+            },
+            {
+              "value": "=1",
+              "label": "=1（重置为一）"
+            },
+            {
+              "value": "-1",
+              "label": "-1（递减）"
+            }
+          ],
+          "default": "+1",
+          "required": false,
+          "help": "计数器操作",
+          "key": "counter_op"
+        }
+      ],
+      "help": "记录实验事件。当前流程执行到此处时，记录一条带时间戳的数据。可选：做计数器操作（+1/=0/=1/-1）。",
+      "ports": {
+        "inputs": -1,
+        "outputs": 1
+      }
+    },
+    "record_end": {
+      "label": "记录终止",
+      "color": "#E53935",
+      "icon": "⏹",
+      "fields": [
+        {
+          "type": "text",
+          "maxLength": 100,
+          "required": true,
+          "help": "事件名称",
+          "key": "event_name"
+        }
+      ],
+      "help": "记录后终止流程分支。用于分支路径的终点记录，记录完成即停止，不再往下执行。",
+      "ports": {
+        "inputs": -1,
+        "outputs": 0
+      }
+    },
+    "sniffer": {
+      "label": "旁路探针",
+      "color": "#FFB74D",
+      "icon": "👁",
+      "fields": [
+        {
+          "type": "select",
+          "options": "dynamic",
+          "required": true,
+          "help": "信号源 ID，从可用的摄像头区域/硬件传感器中选择",
+          "key": "signal_id"
+        },
+        {
+          "type": "text",
+          "maxLength": 100,
+          "required": true,
+          "help": "事件名称",
+          "key": "event_name"
+        }
+      ],
+      "help": "旁路观测节点。0入0出，不参与流程拓扑。运行时独立监听指定信号源。",
+      "ports": {
+        "inputs": 0,
+        "outputs": 0
+      }
+    }
+  },
+  "PALETTE_ORDER": [
+    "trigger",
+    "delay",
+    "condition",
+    "execute",
+    "loop",
+    "and",
+    "not",
+    "fork",
+    "record",
+    "record_end",
+    "sniffer"
+  ],
+  "MULTI_INPUT_NODES": [
+    "and",
+    "end",
+    "trigger",
+    "delay",
+    "execute",
+    "record",
+    "record_end"
+  ],
+  "_meta": {
+    "generated_from": "session/shared_schema.py",
+    "generated_at": "2026-06-06 19:23:45"
+  }
+}

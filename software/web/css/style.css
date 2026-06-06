@@ -42,6 +42,36 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .event-log .warn { color: #FFB74D; }
 .event-log .error { color: #E57373; }
 .event-log .success { color: #81C784; }
+
+/* 覆盖层样式：无实验禁用交互 */
+.editor-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(250, 250, 250, 0.88);
+  backdrop-filter: blur(2px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  pointer-events: auto;
+}
+.editor-overlay .editor-overlay-icon {
+  font-size: 40px;
+  margin-bottom: 12px;
+  opacity: 0.4;
+}
+.editor-overlay .editor-overlay-text {
+  font-size: 15px;
+  color: #666;
+  font-weight: 500;
+  text-align: center;
+  line-height: 1.6;
+  padding: 0 20px;
+}
 .form-group { margin-bottom: 12px; }
 .form-group label { display: block; font-size: 13px; color: var(--text-secondary); margin-bottom: 4px; }
 .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; }
@@ -85,6 +115,106 @@ tr:hover { background: #f8f8f8; }
 .camera-zone { position: absolute; border: 2px solid #FF9800; background: rgba(255,152,0,0.15); cursor: move; }
 .camera-zone-label { position: absolute; top: -20px; left: 0; background: #FF9800; color: white; padding: 1px 6px; border-radius: 3px; font-size: 11px; white-space: nowrap; }
 
+/* Flow editor palette styling */
+#nodePalette .palette-item {
+  padding: 6px 10px;
+  margin: 2px 0;
+  border-radius: 4px;
+  cursor: grab;
+  font-size: 12px;
+  background: #f0f0f0;
+  transition: all 0.2s;
+  border-left: 3px solid transparent;
+}
+#nodePalette .palette-item:hover {
+  background: #e0e0e0;
+}
+/* Group-based left border colors */
+#nodePalette .palette-item[data-type="trigger"] { border-left-color: #FF9800; }
+#nodePalette .palette-item[data-type="delay"] { border-left-color: #7C4DFF; }
+#nodePalette .palette-item[data-type="condition"] { border-left-color: #5C6BC0; }
+#nodePalette .palette-item[data-type="loop"] { border-left-color: #7C4DFF; }
+#nodePalette .palette-item[data-type="execute"] { border-left-color: #43A047; }
+#nodePalette .palette-item[data-type="record"] { border-left-color: #43A047; }
+#nodePalette .palette-item[data-type="and"] { border-left-color: #78909C; }
+#nodePalette .palette-item[data-type="or"] { border-left-color: #90A4AE; }
+#nodePalette .palette-item[data-type="not"] { border-left-color: #B0BEC5; }
+#nodePalette .palette-item[data-type="fork"] { border-left-color: #90A4AE; }
+#nodePalette .palette-item[data-type="record_end"] { border-left-color: #E53935; }
+#nodePalette .palette-item[data-type="sniffer"] { border-left-color: #FFB74D; }
+
+/* Labeled output ports — ensure readable and no overlap */
+.node-port-out.labeled {
+  min-width: 48px !important;
+  width: auto !important;
+  height: 20px !important;
+  border-radius: 10px !important;
+  padding: 0 8px !important;
+  font-size: 10px !important;
+  color: #1a1a2e !important;
+  background: rgba(255,255,255,0.9) !important;
+  border: 1px solid #ccc !important;
+  white-space: nowrap !important;
+  line-height: 20px !important;
+  text-align: center !important;
+  pointer-events: auto !important;
+  position: absolute !important;
+}
+
+/* 配置面板样式 */
+#flowConfigPanel {
+  transition: opacity 0.2s;
+}
+
+#flowConfigPanel h3 {
+  color: var(--text-primary);
+}
+
+#flowConfigForm .form-group {
+  margin-bottom: 12px;
+}
+
+#flowConfigForm label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+#flowConfigForm input,
+#flowConfigForm select {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+/* 响应式：平板端 */
 @media (max-width: 768px) {
-  .grid-2, .grid-3 { grid-template-columns: 1fr; }
+  .grid-2 { grid-template-columns: 1fr; }
+  .grid-3 {
+    grid-template-columns: 140px 1fr !important;
+  }
+
+  #flowConfigPanel {
+    grid-column: 1 / -1;
+    max-height: 300px;
+  }
+}
+
+/* 响应式：移动端 */
+@media (max-width: 480px) {
+  .grid-3 {
+    grid-template-columns: 1fr !important;
+  }
+
+  #flowConfigPanel {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    max-height: 40vh;
+    z-index: 100;
+    border-radius: 12px 12px 0 0;
+    box-shadow: 0 -4px 16px rgba(0,0,0,0.15);
+  }
 }

@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="tokyo-night">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>行为学训练盒 · 项目内部总结</title>
+<link rel="stylesheet" href=".agents/skills/html-ppt/assets/fonts.css">
+<link rel="stylesheet" href=".agents/skills/html-ppt/assets/base.css">
+<link rel="stylesheet" id="theme-link" href=".agents/skills/html-ppt/assets/themes/tokyo-night.css">
+<link rel="stylesheet" href=".agents/skills/html-ppt/assets/animations/animations.css">
+<style>
+  .status-ok{color:var(--good)}.status-wip{color:var(--warn)}.status-red{color:var(--bad)}
+  .gates-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:20px}
+  .gate-card{border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;background:var(--surface)}
+  .gate-card h4{font-size:14px;margin:0 0 6px}
+  .gate-card p{font-size:13px;color:var(--text-2);margin:0;line-height:1.5}
+  .gate-card .gate-status{font-size:32px;font-weight:900;margin-bottom:6px}
+  .blockers{margin-top:16px}
+  .blocker-item{display:flex;align-items:center;gap:12px;padding:10px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:8px;font-size:14px}
+  .blocker-item .dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+  .dot-red{background:var(--bad)}.dot-yellow{background:var(--warn)}
+  .three-lines{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:20px}
+  .line-card{border:1px solid var(--border);border-radius:var(--radius);padding:22px;background:var(--surface);position:relative}
+  .line-card .line-header{font-size:13px;color:var(--text-3);margin-bottom:8px}
+  .line-card h3{font-size:18px;margin:0 0 8px}
+  .line-card .line-status{display:inline-block;padding:2px 12px;border-radius:999px;font-size:12px;margin-bottom:12px}
+  .line-card .line-status.active{background:color-mix(in srgb,var(--accent) 20%,transparent);color:var(--accent)}
+  .line-card .line-status.waiting{background:color-mix(in srgb,var(--warn) 20%,transparent);color:var(--warn)}
+  .line-card ul{font-size:13px;color:var(--text-2);padding-left:18px;margin:0}
+  .line-card li{margin-bottom:6px;line-height:1.5}
+  .arch-box{border:1px solid var(--border-strong);border-radius:var(--radius);padding:24px;margin-top:20px;background:var(--surface)}
+  .arch-row{display:flex;align-items:center;gap:16px;font-size:14px}
+  .arch-node{flex:1;text-align:center;padding:14px 10px;border-radius:var(--radius-sm);background:var(--bg-soft);border:1px solid var(--border)}
+  .arch-node strong{display:block;margin-bottom:4px;color:var(--accent)}
+  .arch-node span{font-size:12px;color:var(--text-2)}
+  .arch-arrow{font-size:24px;color:var(--text-3);flex-shrink:0}
+</style>
+</head>
+<body data-themes="tokyo-night,cyberpunk-neon,dracula,catppuccin-mocha" data-theme-base=".agents/skills/html-ppt/assets/themes/">
+<div class="deck">
+
+  <!-- 1. Cover -->
+  <section class="slide center tc" data-title="封面">
+    <div>
+      <p class="kicker anim-fade-in" data-anim="fade-in">行为学训练盒 · 项目内部总结</p>
+      <h1 class="h1 anim-fade-up" data-anim="fade-up">
+        让机器<br>替代<span class="gradient-text">人工训练</span>
+      </h1>
+      <p class="lede">仓鼠操作性条件反射 · 自动化训练平台</p>
+      <div class="row wrap mt-l justify-center" style="gap:10px">
+        <span class="pill pill-accent anim-rise-in" data-anim="rise-in">阶段1 进行中</span>
+        <span class="pill anim-rise-in" data-anim="rise-in">三线并行</span>
+        <span class="pill anim-rise-in" data-anim="rise-in">2026-06-03</span>
+      </div>
+    </div>
+    <div class="deck-footer"><span class="dim2">PM 豆子 · 内部汇报</span><span class="slide-number" data-current="1" data-total="7"></span></div>
+    <div class="notes">口播：大家好，我是 PM 豆子。今天给团队做一次项目内部总结，快速过一下行为学训练盒的核心信息。这个 PPT 用 tokyo-night 主题，按 T 键可以切换其他科技风主题。</div>
+  </section>
+
+  <!-- 2. 项目定位 -->
+  <section class="slide" data-title="项目定位">
+    <p class="kicker">What &amp; Why</p>
+    <h2 class="h2">一只仓鼠，5天，自学成才</h2>
+    <div class="grid g2 mt-l">
+      <div class="card" data-anim="fade-up">
+        <h4>🔄 核心闭环</h4>
+        <p class="dim" style="font-size:15px;line-height:1.7">传感器/摄像头触发输入 → 事件上报 → <strong>流程引擎</strong>处理 → 动作输出（喂食/灯控）→ 数据落盘 CSV</p>
+      </div>
+      <div class="card" data-anim="fade-up">
+        <h4>🎯 V1 终点</h4>
+        <p class="dim" style="font-size:15px;line-height:1.7">未经训练的仓鼠放入系统后，<strong>5 天内通过自动训练</strong>学会操作行为。测的是效果，不是技术。</p>
+      </div>
+    </div>
+    <div class="arch-box mt-l" data-anim="fade-up">
+      <div class="arch-row">
+        <div class="arch-node"><strong>电脑软件</strong><span>规则引擎 + GUI</span></div>
+        <span class="arch-arrow">←→</span>
+        <div class="arch-node"><strong>控制盒</strong><span>ESP32 + 固件</span></div>
+        <span class="arch-arrow">←</span>
+        <div class="arch-node"><strong>传感器</strong><span>啄击检测</span></div>
+        <span class="arch-arrow">→</span>
+        <div class="arch-node"><strong>执行器</strong><span>自动出粮</span></div>
+      </div>
+      <div style="text-align:center;margin-top:12px;font-size:12px;color:var(--text-3)">规则在电脑上执行 · 控制盒只负责收发指令 · 所有信号统一汇入</div>
+    </div>
+    <div class="notes">这里强调两个核心：1）我们的闭环是触发→处理→动作→记录，不是技术堆叠；2）V1 的最终判断标准是动物效果。架构上，规则全在电脑侧执行，控制盒只是执行终端，这降低了硬件复杂度。</div>
+  </section>
+
+  <!-- 3. 阶段路线 -->
+  <section class="slide" data-title="阶段路线">
+    <p class="kicker">Roadmap</p>
+    <h2 class="h2">V1 四阶段路线</h2>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0;margin-top:28px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+      <div style="padding:20px 22px;border-right:1px solid var(--border);background:var(--surface);opacity:0.6">
+        <span style="display:inline-block;padding:3px 12px;border-radius:999px;font-size:11px;background:var(--good);color:#fff;margin-bottom:10px">✅ DONE</span>
+        <h4 style="font-size:15px;margin:8px 0 4px">阶段0 · 基础定义</h4>
+        <ul style="padding-left:18px;margin:8px 0 0;font-size:13px;color:var(--text-2);line-height:1.6">
+          <li>PRD 定稿 v1.2</li><li>任务书定稿 v1.4</li><li>验收清单 v3.2</li><li>合作框架就绪</li>
+        </ul>
+      </div>
+      <div style="padding:20px 22px;border-right:1px solid var(--border);background:color-mix(in srgb,var(--accent) 6%,var(--surface))">
+        <span style="display:inline-block;padding:3px 12px;border-radius:999px;font-size:11px;background:var(--accent);color:#fff;margin-bottom:10px">🔄 NOW</span>
+        <h4 style="font-size:15px;margin:8px 0 4px">阶段1 · 三线构建</h4>
+        <ul style="padding-left:18px;margin:8px 0 0;font-size:13px;color:var(--text-2);line-height:1.6">
+          <li>A1 嵌入式外包 ¥4k</li><li>A2 结构手板 ¥4k</li><li>B 软件自研 v0.5</li><li>三线互不阻塞</li>
+        </ul>
+      </div>
+      <div style="padding:20px 22px;border-right:1px solid var(--border);background:var(--surface)">
+        <span style="display:inline-block;padding:3px 12px;border-radius:999px;font-size:11px;background:var(--surface-2);color:var(--text-2);margin-bottom:10px">⏳ NEXT</span>
+        <h4 style="font-size:15px;margin:8px 0 4px">阶段2 · 集成验证</h4>
+        <ul style="padding-left:18px;margin:8px 0 0;font-size:13px;color:var(--text-2);line-height:1.6">
+          <li>软硬件联调</li><li>动物实验 N 轮</li><li>参数调优</li><li>唯一门禁：D4</li>
+        </ul>
+      </div>
+      <div style="padding:20px 22px;background:var(--surface)">
+        <span style="display:inline-block;padding:3px 12px;border-radius:999px;font-size:11px;background:var(--surface-2);color:var(--text-2);margin-bottom:10px">🔮 FUTURE</span>
+        <h4 style="font-size:15px;margin:8px 0 4px">阶段3 · 发布迭代</h4>
+        <ul style="padding-left:18px;margin:8px 0 0;font-size:13px;color:var(--text-2);line-height:1.6">
+          <li>V1 收尾</li><li>文档归档</li><li>V2 路线草案</li><li>D4 通过即 V1 达成</li>
+        </ul>
+      </div>
+    </div>
+    <p class="dim mt-l" style="font-size:13px;color:var(--text-3)">关键原则：阶段1只考核各线各自交付，不考核联调。阶段2唯一门禁是动物训练效果（D4），不考核文档完美度。</p>
+    <div class="notes">四阶段的核心逻辑：阶段0定义契约，阶段1分头构建，阶段2专心做实验调参，阶段3收尾归档。特别强调阶段2的唯一门禁就是仓鼠学会了没有，其他都不卡。</div>
+  </section>
+
+  <!-- 4. 三线并行状态 -->
+  <section class="slide" data-title="三线并行">
+    <p class="kicker">Phase 1 · 三线构建</p>
+    <h2 class="h2">A1/A2/B 并行推进中</h2>
+    <div class="three-lines anim-stagger-list" data-anim-target>
+      <div class="line-card">
+        <div class="line-header">LINE A1</div>
+        <h3>嵌入式外包</h3>
+        <span class="line-status waiting">🟡 待发任务单</span>
+        <ul>
+          <li>ESP32 控制板 + 固件</li>
+          <li>已找到开发者（¥4,000）</li>
+          <li>M0 → M1 PCB 设计</li>
+          <li>M2 → 成品板交付</li>
+        </ul>
+        <p class="dim" style="font-size:12px;color:var(--text-3);margin-top:12px">阻塞：任务单尚未发出</p>
+      </div>
+      <div class="line-card">
+        <div class="line-header">LINE A2</div>
+        <h3>结构手板</h3>
+        <span class="line-status waiting">🟡 待发任务单</span>
+        <ul>
+          <li>传感器 + 出粮器 + 外壳</li>
+          <li>已找到设计师（¥4,000）</li>
+          <li>M1 → 3D 模型交付</li>
+          <li>M2 → 实物打印装配</li>
+        </ul>
+        <p class="dim" style="font-size:12px;color:var(--text-3);margin-top:12px">阻塞：等待 PCB 尺寸图</p>
+      </div>
+      <div class="line-card">
+        <div class="line-header">LINE B</div>
+        <h3>软件自研</h3>
+        <span class="line-status active">🔄 v0.5 冲刺中</span>
+        <ul>
+          <li>Python FastAPI 后端</li>
+          <li>纯 HTML/CSS/JS 前端</li>
+          <li>WebSocket 实时通信</li>
+          <li>SQLite + CSV 落盘</li>
+        </ul>
+        <p class="dim" style="font-size:12px;color:var(--text-3);margin-top:12px">测试 41/41 全部通过</p>
+      </div>
+    </div>
+    <div class="notes">三条线当前状态：A1/A2 都找到了人但任务单还没发出去——这是本周最优先要推动的事。B 线软件在活跃开发中，v0.5 冲刺，测试全过。</div>
+  </section>
+
+  <!-- 5. 软件门禁 -->
+  <section class="slide" data-title="软件门禁">
+    <p class="kicker">B Line · Gates</p>
+    <h2 class="h2">软件版本门禁</h2>
+    <div class="gates-grid anim-stagger-list" data-anim-target>
+      <div class="gate-card">
+        <p class="gate-status status-ok">✅</p>
+        <h4>G1 · 模拟信号→CSV</h4>
+        <p>cli_app.py mock 验证通过，CSV 导出字段完整</p>
+      </div>
+      <div class="gate-card">
+        <p class="gate-status status-ok">✅</p>
+        <h4>G1.5 · 实验管理 CRUD</h4>
+        <p>实验管理独立页面完整，CRUD 操作可用</p>
+      </div>
+      <div class="gate-card">
+        <p class="gate-status status-wip">🟡</p>
+        <h4>G2 · 摄像头事件→CSV</h4>
+        <p>API 层已通，但物理摄像头端到端从未验证</p>
+      </div>
+      <div class="gate-card">
+        <p class="gate-status status-wip">🔄</p>
+        <h4>G3 · 流程编辑→运行→CSV</h4>
+        <p>进行中：流程图编辑→保存→运行→导出CSV 闭环</p>
+      </div>
+    </div>
+    <div class="blockers mt-l" data-anim="fade-up">
+      <p class="eyebrow" style="color:var(--bad);margin-bottom:8px">TOP BLOCKERS</p>
+      <div class="blocker-item"><span class="dot dot-red"></span><strong>G2 物理摄像头端到端测试未做</strong> — camera.js → 真实摄像头 → POST → CSV 全链路从未验证</div>
+      <div class="blocker-item"><span class="dot dot-red"></span><strong>F5 未修复</strong> — api_stop() 从未调用 session.stop()，stop 后状态仍显示 running</div>
+      <div class="blocker-item"><span class="dot dot-yellow"></span><strong>A1/A2 任务单未发出</strong> — 硬件线停滞，需创始人审批后发出</div>
+      <div class="blocker-item"><span class="dot dot-yellow"></span><strong>PM 知识未沉淀</strong> — 软件交接文档为空模板</div>
+    </div>
+    <div class="notes">G1 和 G1.5 已关门。真正的风险在 G2——我们曾经误标为'已关门'，实际上物理摄像头从来没用过。F5 是代码 BUG，stop 不起作用。这两项是本周必须解决的红区。</div>
+  </section>
+
+  <!-- 6. 风险与成本 -->
+  <section class="slide" data-title="风险与成本">
+    <p class="kicker">Risk &amp; Budget</p>
+    <h2 class="h2">风险概览与投入</h2>
+    <div class="grid g2 mt-l">
+      <div data-anim="fade-up">
+        <p class="eyebrow" style="color:var(--warn)">RISK REGISTER · 开放风险 4 项</p>
+        <div class="blocker-item"><span class="dot dot-red"></span><strong>R-001</strong> 验收模板未做真实试填，门禁判断可能遗漏</div>
+        <div class="blocker-item"><span class="dot dot-yellow"></span><strong>R-004</strong> 外包响应速度和交付质量不确定</div>
+        <div class="blocker-item"><span class="dot dot-yellow"></span><strong>R-006</strong> 嵌入式与结构尺寸不匹配导致返工</div>
+        <div class="blocker-item"><span class="dot dot-yellow"></span><strong>R-007</strong> 个人开发者交付质量不达预期</div>
+      </div>
+      <div data-anim="fade-up">
+        <p class="eyebrow" style="color:var(--accent)">BUDGET · V1 研发成本</p>
+        <div class="card" style="padding:20px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <span style="font-size:14px">嵌入式外包（A1）</span><span style="font-weight:700">¥4,000</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <span style="font-size:14px">结构手板（A2）</span><span style="font-weight:700">¥4,000</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <span style="font-size:14px">软件自研（B）</span><span style="font-weight:700">AI 驱动</span>
+          </div>
+          <hr style="border-color:var(--border);margin:12px 0">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:16px;font-weight:700">合计</span><span style="font-size:20px;font-weight:900;color:var(--accent)">¥8,000</span>
+          </div>
+        </div>
+        <p class="dim mt-s" style="font-size:12px;color:var(--text-3)">分期付款控制风险 · 先付少量启动款 · 验收后付尾款</p>
+      </div>
+    </div>
+    <div class="notes">当前 4 个开放风险都是中高等级的。成本方面，V1 总外包投入 ¥8,000，软件自研由 AI agent 驱动零外包成本。分期付款策略控制外包交付风险。</div>
+  </section>
+
+  <!-- 7. 下一步 + Thanks -->
+  <section class="slide center tc" data-title="下一步">
+    <div>
+      <p class="kicker anim-fade-in" data-anim="fade-in">Next Actions</p>
+      <h2 class="h2 anim-fade-up" data-anim="fade-up">本周优先级</h2>
+      <div class="mt-l" style="display:inline-block;text-align:left" data-anim="rise-in">
+        <div class="blocker-item"><span style="font-weight:900;color:var(--accent);min-width:24px">1</span> 创始人审批 A1/A2 任务单并发出</div>
+        <div class="blocker-item"><span style="font-weight:900;color:var(--accent);min-width:24px">2</span> G2 物理摄像头端到端验证（camera → CSV）</div>
+        <div class="blocker-item"><span style="font-weight:900;color:var(--accent);min-width:24px">3</span> 修复 F5：stop 后状态正确显示 stopped</div>
+        <div class="blocker-item"><span style="font-weight:900;color:var(--accent);min-width:24px">4</span> PM 填写软件交接文档模板</div>
+      </div>
+      <div style="margin-top:60px" data-anim="fade-up">
+        <h1 style="font-size:120px;line-height:1;margin:0"><span class="gradient-text">Thanks</span></h1>
+        <p class="lede">行为学训练盒 · PM 豆子 · 2026-06-03</p>
+      </div>
+    </div>
+    <div class="deck-footer"><span class="dim2">← → 翻页 · T 换主题 · F 全屏 · O 概览</span><span class="slide-number" data-current="7" data-total="7"></span></div>
+    <div class="notes">最后总结：本周四件事——发任务单、验证摄像头、修F5、写文档。D4 是我们的北极星：仓鼠学会了没有，不是代码写完了没有。谢谢大家。</div>
+  </section>
+
+</div>
+<script src=".agents/skills/html-ppt/assets/runtime.js"></script>
+</body></html>

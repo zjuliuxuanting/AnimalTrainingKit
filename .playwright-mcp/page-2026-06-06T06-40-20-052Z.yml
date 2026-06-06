@@ -1,0 +1,384 @@
+- generic [active] [ref=e1]:
+  - navigation [ref=e5]:
+    - heading "🧪 行为学训练盒" [level=1] [ref=e6]
+    - generic [ref=e8]: 服务运行中
+  - generic [ref=e9]:
+    - generic [ref=e10] [cursor=pointer]: 🧪 实验管理
+    - generic "请先进入一个启用了摄像头的实验": 📷 摄像头
+    - generic [ref=e11] [cursor=pointer]: 📡 设备
+    - generic "请先进入一个实验": 🔀 流程编辑
+    - generic [ref=e12] [cursor=pointer]: 📊 运行监控
+    - generic [ref=e13] [cursor=pointer]: 📈 数据图表
+  - generic [ref=e14]:
+    - generic [ref=e15]:
+      - heading "实验管理" [level=2] [ref=e16]
+      - button "＋ 新建实验" [ref=e17] [cursor=pointer]
+    - generic [ref=e18]:
+      - generic [ref=e19]:
+        - heading "实验记录" [level=3] [ref=e20]
+        - textbox "筛选动物编号或名称..." [ref=e22]
+      - table [ref=e26]:
+        - rowgroup [ref=e27]:
+          - row "动物编号 实验名称 触发源 摄像头配置 状态 已运行 事件数 操作" [ref=e28]:
+            - columnheader [ref=e29]:
+              - checkbox [ref=e30]
+            - columnheader "动物编号" [ref=e31]
+            - columnheader "实验名称" [ref=e32]
+            - columnheader "触发源" [ref=e33]
+            - columnheader "摄像头配置" [ref=e34]
+            - columnheader "状态" [ref=e35]
+            - columnheader "已运行" [ref=e36]
+            - columnheader "事件数" [ref=e37]
+            - columnheader "操作" [ref=e38]
+          - row "T03 综合管线测试 摄像头 ✅ 等待启动 — 0 📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e39]:
+            - cell [ref=e40]:
+              - checkbox [ref=e41]
+            - cell "T03" [ref=e42]
+            - cell "综合管线测试" [ref=e43]
+            - cell "摄像头" [ref=e44]
+            - cell "✅" [ref=e45]
+            - cell "等待启动" [ref=e46]
+            - cell "—" [ref=e47]
+            - cell "0" [ref=e48]
+            - cell "📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e49]:
+              - button "📝 编辑" [ref=e50] [cursor=pointer]
+              - button "▶ 启动" [ref=e51] [cursor=pointer]
+              - button "📂 详情" [ref=e52] [cursor=pointer]
+              - button "📥 导出" [ref=e53] [cursor=pointer]
+              - button "🗑 删除" [ref=e54] [cursor=pointer]
+          - row "test-001 热身测试 手动 — 等待启动 — 0 📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e55]:
+            - cell [ref=e56]:
+              - checkbox [ref=e57]
+            - cell "test-001" [ref=e58]
+            - cell "热身测试" [ref=e59]
+            - cell "手动" [ref=e60]
+            - cell "—" [ref=e61]
+            - cell "等待启动" [ref=e62]
+            - cell "—" [ref=e63]
+            - cell "0" [ref=e64]
+            - cell "📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e65]:
+              - button "📝 编辑" [ref=e66] [cursor=pointer]
+              - button "▶ 启动" [ref=e67] [cursor=pointer]
+              - button "📂 详情" [ref=e68] [cursor=pointer]
+              - button "📥 导出" [ref=e69] [cursor=pointer]
+              - button "🗑 删除" [ref=e70] [cursor=pointer]
+          - row "T01 摄像头追踪测试 摄像头 ⚠️ 等待启动 — 0 📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e71]:
+            - cell [ref=e72]:
+              - checkbox [ref=e73]
+            - cell "T01" [ref=e74]
+            - cell "摄像头追踪测试" [ref=e75]
+            - cell "摄像头" [ref=e76]
+            - cell "⚠️" [ref=e77]
+            - cell "等待启动" [ref=e78]
+            - cell "—" [ref=e79]
+            - cell "0" [ref=e80]
+            - cell "📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e81]:
+              - button "📝 编辑" [ref=e82] [cursor=pointer]
+              - button "▶ 启动" [ref=e83] [cursor=pointer]
+              - button "📂 详情" [ref=e84] [cursor=pointer]
+              - button "📥 导出" [ref=e85] [cursor=pointer]
+              - button "🗑 删除" [ref=e86] [cursor=pointer]
+          - row "T02 手动触发验证 手动 — 等待启动 — 0 📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e87]:
+            - cell [ref=e88]:
+              - checkbox [ref=e89]
+            - cell "T02" [ref=e90]
+            - cell "手动触发验证" [ref=e91]
+            - cell "手动" [ref=e92]
+            - cell "—" [ref=e93]
+            - cell "等待启动" [ref=e94]
+            - cell "—" [ref=e95]
+            - cell "0" [ref=e96]
+            - cell "📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e97]:
+              - button "📝 编辑" [ref=e98] [cursor=pointer]
+              - button "▶ 启动" [ref=e99] [cursor=pointer]
+              - button "📂 详情" [ref=e100] [cursor=pointer]
+              - button "📥 导出" [ref=e101] [cursor=pointer]
+              - button "🗑 删除" [ref=e102] [cursor=pointer]
+          - row "b1b regB1_B 手动 — 等待启动 — 0 📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e103]:
+            - cell [ref=e104]:
+              - checkbox [ref=e105]
+            - cell "b1b" [ref=e106]
+            - cell "regB1_B" [ref=e107]
+            - cell "手动" [ref=e108]
+            - cell "—" [ref=e109]
+            - cell "等待启动" [ref=e110]
+            - cell "—" [ref=e111]
+            - cell "0" [ref=e112]
+            - cell "📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e113]:
+              - button "📝 编辑" [ref=e114] [cursor=pointer]
+              - button "▶ 启动" [ref=e115] [cursor=pointer]
+              - button "📂 详情" [ref=e116] [cursor=pointer]
+              - button "📥 导出" [ref=e117] [cursor=pointer]
+              - button "🗑 删除" [ref=e118] [cursor=pointer]
+          - row "b1a regB1_A 手动 — 等待启动 — 0 📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e119]:
+            - cell [ref=e120]:
+              - checkbox [ref=e121]
+            - cell "b1a" [ref=e122]
+            - cell "regB1_A" [ref=e123]
+            - cell "手动" [ref=e124]
+            - cell "—" [ref=e125]
+            - cell "等待启动" [ref=e126]
+            - cell "—" [ref=e127]
+            - cell "0" [ref=e128]
+            - cell "📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e129]:
+              - button "📝 编辑" [ref=e130] [cursor=pointer]
+              - button "▶ 启动" [ref=e131] [cursor=pointer]
+              - button "📂 详情" [ref=e132] [cursor=pointer]
+              - button "📥 导出" [ref=e133] [cursor=pointer]
+              - button "🗑 删除" [ref=e134] [cursor=pointer]
+          - row "test-s3 S3连线测试 手动 — 等待启动 — 0 📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e135]:
+            - cell [ref=e136]:
+              - checkbox [ref=e137]
+            - cell "test-s3" [ref=e138]
+            - cell "S3连线测试" [ref=e139]
+            - cell "手动" [ref=e140]
+            - cell "—" [ref=e141]
+            - cell "等待启动" [ref=e142]
+            - cell "—" [ref=e143]
+            - cell "0" [ref=e144]
+            - cell "📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e145]:
+              - button "📝 编辑" [ref=e146] [cursor=pointer]
+              - button "▶ 启动" [ref=e147] [cursor=pointer]
+              - button "📂 详情" [ref=e148] [cursor=pointer]
+              - button "📥 导出" [ref=e149] [cursor=pointer]
+              - button "🗑 删除" [ref=e150] [cursor=pointer]
+          - row "PT01 PLAYWRIGHT_TEST 手动 — 等待启动 — 0 📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e151]:
+            - cell [ref=e152]:
+              - checkbox [ref=e153]
+            - cell "PT01" [ref=e154]
+            - cell "PLAYWRIGHT_TEST" [ref=e155]
+            - cell "手动" [ref=e156]
+            - cell "—" [ref=e157]
+            - cell "等待启动" [ref=e158]
+            - cell "—" [ref=e159]
+            - cell "0" [ref=e160]
+            - cell "📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e161]:
+              - button "📝 编辑" [ref=e162] [cursor=pointer]
+              - button "▶ 启动" [ref=e163] [cursor=pointer]
+              - button "📂 详情" [ref=e164] [cursor=pointer]
+              - button "📥 导出" [ref=e165] [cursor=pointer]
+              - button "🗑 删除" [ref=e166] [cursor=pointer]
+          - row "T08 G3收尾测试-流程绑定实验 手动 — 等待启动 — 0 📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e167]:
+            - cell [ref=e168]:
+              - checkbox [ref=e169]
+            - cell "T08" [ref=e170]
+            - cell "G3收尾测试-流程绑定实验" [ref=e171]
+            - cell "手动" [ref=e172]
+            - cell "—" [ref=e173]
+            - cell "等待启动" [ref=e174]
+            - cell "—" [ref=e175]
+            - cell "0" [ref=e176]
+            - cell "📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e177]:
+              - button "📝 编辑" [ref=e178] [cursor=pointer]
+              - button "▶ 启动" [ref=e179] [cursor=pointer]
+              - button "📂 详情" [ref=e180] [cursor=pointer]
+              - button "📥 导出" [ref=e181] [cursor=pointer]
+              - button "🗑 删除" [ref=e182] [cursor=pointer]
+          - row "bug5 BUG5_撤销测试 手动 — 等待启动 — 0 📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e183]:
+            - cell [ref=e184]:
+              - checkbox [ref=e185]
+            - cell "bug5" [ref=e186]
+            - cell "BUG5_撤销测试" [ref=e187]
+            - cell "手动" [ref=e188]
+            - cell "—" [ref=e189]
+            - cell "等待启动" [ref=e190]
+            - cell "—" [ref=e191]
+            - cell "0" [ref=e192]
+            - cell "📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e193]:
+              - button "📝 编辑" [ref=e194] [cursor=pointer]
+              - button "▶ 启动" [ref=e195] [cursor=pointer]
+              - button "📂 详情" [ref=e196] [cursor=pointer]
+              - button "📥 导出" [ref=e197] [cursor=pointer]
+              - button "🗑 删除" [ref=e198] [cursor=pointer]
+          - row "bug2 BUG2_START拖线 手动 — 等待启动 — 0 📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e199]:
+            - cell [ref=e200]:
+              - checkbox [ref=e201]
+            - cell "bug2" [ref=e202]
+            - cell "BUG2_START拖线" [ref=e203]
+            - cell "手动" [ref=e204]
+            - cell "—" [ref=e205]
+            - cell "等待启动" [ref=e206]
+            - cell "—" [ref=e207]
+            - cell "0" [ref=e208]
+            - cell "📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e209]:
+              - button "📝 编辑" [ref=e210] [cursor=pointer]
+              - button "▶ 启动" [ref=e211] [cursor=pointer]
+              - button "📂 详情" [ref=e212] [cursor=pointer]
+              - button "📥 导出" [ref=e213] [cursor=pointer]
+              - button "🗑 删除" [ref=e214] [cursor=pointer]
+          - row "bug2b BUG2_B 手动 — 等待启动 — 0 📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e215]:
+            - cell [ref=e216]:
+              - checkbox [ref=e217]
+            - cell "bug2b" [ref=e218]
+            - cell "BUG2_B" [ref=e219]
+            - cell "手动" [ref=e220]
+            - cell "—" [ref=e221]
+            - cell "等待启动" [ref=e222]
+            - cell "—" [ref=e223]
+            - cell "0" [ref=e224]
+            - cell "📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e225]:
+              - button "📝 编辑" [ref=e226] [cursor=pointer]
+              - button "▶ 启动" [ref=e227] [cursor=pointer]
+              - button "📂 详情" [ref=e228] [cursor=pointer]
+              - button "📥 导出" [ref=e229] [cursor=pointer]
+              - button "🗑 删除" [ref=e230] [cursor=pointer]
+          - row "bug1-b BUG1_实验B 手动 — 等待启动 — 0 📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e231]:
+            - cell [ref=e232]:
+              - checkbox [ref=e233]
+            - cell "bug1-b" [ref=e234]
+            - cell "BUG1_实验B" [ref=e235]
+            - cell "手动" [ref=e236]
+            - cell "—" [ref=e237]
+            - cell "等待启动" [ref=e238]
+            - cell "—" [ref=e239]
+            - cell "0" [ref=e240]
+            - cell "📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e241]:
+              - button "📝 编辑" [ref=e242] [cursor=pointer]
+              - button "▶ 启动" [ref=e243] [cursor=pointer]
+              - button "📂 详情" [ref=e244] [cursor=pointer]
+              - button "📥 导出" [ref=e245] [cursor=pointer]
+              - button "🗑 删除" [ref=e246] [cursor=pointer]
+          - row "bug1-a BUG1_实验A 手动 — 等待启动 — 0 📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e247]:
+            - cell [ref=e248]:
+              - checkbox [ref=e249]
+            - cell "bug1-a" [ref=e250]
+            - cell "BUG1_实验A" [ref=e251]
+            - cell "手动" [ref=e252]
+            - cell "—" [ref=e253]
+            - cell "等待启动" [ref=e254]
+            - cell "—" [ref=e255]
+            - cell "0" [ref=e256]
+            - cell "📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e257]:
+              - button "📝 编辑" [ref=e258] [cursor=pointer]
+              - button "▶ 启动" [ref=e259] [cursor=pointer]
+              - button "📂 详情" [ref=e260] [cursor=pointer]
+              - button "📥 导出" [ref=e261] [cursor=pointer]
+              - button "🗑 删除" [ref=e262] [cursor=pointer]
+          - row "sign B4_SignTracking 手动 — 等待启动 — 0 📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e263]:
+            - cell [ref=e264]:
+              - checkbox [ref=e265]
+            - cell "sign" [ref=e266]
+            - cell "B4_SignTracking" [ref=e267]
+            - cell "手动" [ref=e268]
+            - cell "—" [ref=e269]
+            - cell "等待启动" [ref=e270]
+            - cell "—" [ref=e271]
+            - cell "0" [ref=e272]
+            - cell "📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e273]:
+              - button "📝 编辑" [ref=e274] [cursor=pointer]
+              - button "▶ 启动" [ref=e275] [cursor=pointer]
+              - button "📂 详情" [ref=e276] [cursor=pointer]
+              - button "📥 导出" [ref=e277] [cursor=pointer]
+              - button "🗑 删除" [ref=e278] [cursor=pointer]
+          - row "csrtt B3_5CSRTT 手动 — 等待启动 — 0 📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e279]:
+            - cell [ref=e280]:
+              - checkbox [ref=e281]
+            - cell "csrtt" [ref=e282]
+            - cell "B3_5CSRTT" [ref=e283]
+            - cell "手动" [ref=e284]
+            - cell "—" [ref=e285]
+            - cell "等待启动" [ref=e286]
+            - cell "—" [ref=e287]
+            - cell "0" [ref=e288]
+            - cell "📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e289]:
+              - button "📝 编辑" [ref=e290] [cursor=pointer]
+              - button "▶ 启动" [ref=e291] [cursor=pointer]
+              - button "📂 详情" [ref=e292] [cursor=pointer]
+              - button "📥 导出" [ref=e293] [cursor=pointer]
+              - button "🗑 删除" [ref=e294] [cursor=pointer]
+          - row "social B2_社交自我给药 手动 — 等待启动 — 0 📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e295]:
+            - cell [ref=e296]:
+              - checkbox [ref=e297]
+            - cell "social" [ref=e298]
+            - cell "B2_社交自我给药" [ref=e299]
+            - cell "手动" [ref=e300]
+            - cell "—" [ref=e301]
+            - cell "等待启动" [ref=e302]
+            - cell "—" [ref=e303]
+            - cell "0" [ref=e304]
+            - cell "📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e305]:
+              - button "📝 编辑" [ref=e306] [cursor=pointer]
+              - button "▶ 启动" [ref=e307] [cursor=pointer]
+              - button "📂 详情" [ref=e308] [cursor=pointer]
+              - button "📥 导出" [ref=e309] [cursor=pointer]
+              - button "🗑 删除" [ref=e310] [cursor=pointer]
+          - row "b1b B1实验B 手动 — 等待启动 — 0 📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e311]:
+            - cell [ref=e312]:
+              - checkbox [ref=e313]
+            - cell "b1b" [ref=e314]
+            - cell "B1实验B" [ref=e315]
+            - cell "手动" [ref=e316]
+            - cell "—" [ref=e317]
+            - cell "等待启动" [ref=e318]
+            - cell "—" [ref=e319]
+            - cell "0" [ref=e320]
+            - cell "📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e321]:
+              - button "📝 编辑" [ref=e322] [cursor=pointer]
+              - button "▶ 启动" [ref=e323] [cursor=pointer]
+              - button "📂 详情" [ref=e324] [cursor=pointer]
+              - button "📥 导出" [ref=e325] [cursor=pointer]
+              - button "🗑 删除" [ref=e326] [cursor=pointer]
+          - row "b1a B1实验A 手动 — 等待启动 — 0 📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e327]:
+            - cell [ref=e328]:
+              - checkbox [ref=e329]
+            - cell "b1a" [ref=e330]
+            - cell "B1实验A" [ref=e331]
+            - cell "手动" [ref=e332]
+            - cell "—" [ref=e333]
+            - cell "等待启动" [ref=e334]
+            - cell "—" [ref=e335]
+            - cell "0" [ref=e336]
+            - cell "📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e337]:
+              - button "📝 编辑" [ref=e338] [cursor=pointer]
+              - button "▶ 启动" [ref=e339] [cursor=pointer]
+              - button "📂 详情" [ref=e340] [cursor=pointer]
+              - button "📥 导出" [ref=e341] [cursor=pointer]
+              - button "🗑 删除" [ref=e342] [cursor=pointer]
+          - row "fr1 B1_FR1操作条件反射 手动 — 等待启动 — 0 📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e343]:
+            - cell [ref=e344]:
+              - checkbox [ref=e345]
+            - cell "fr1" [ref=e346]
+            - cell "B1_FR1操作条件反射" [ref=e347]
+            - cell "手动" [ref=e348]
+            - cell "—" [ref=e349]
+            - cell "等待启动" [ref=e350]
+            - cell "—" [ref=e351]
+            - cell "0" [ref=e352]
+            - cell "📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e353]:
+              - button "📝 编辑" [ref=e354] [cursor=pointer]
+              - button "▶ 启动" [ref=e355] [cursor=pointer]
+              - button "📂 详情" [ref=e356] [cursor=pointer]
+              - button "📥 导出" [ref=e357] [cursor=pointer]
+              - button "🗑 删除" [ref=e358] [cursor=pointer]
+          - row "fr1 B1_FR1_操作 手动 — 等待启动 — 0 📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e359]:
+            - cell [ref=e360]:
+              - checkbox [ref=e361]
+            - cell "fr1" [ref=e362]
+            - cell "B1_FR1_操作" [ref=e363]
+            - cell "手动" [ref=e364]
+            - cell "—" [ref=e365]
+            - cell "等待启动" [ref=e366]
+            - cell "—" [ref=e367]
+            - cell "0" [ref=e368]
+            - cell "📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e369]:
+              - button "📝 编辑" [ref=e370] [cursor=pointer]
+              - button "▶ 启动" [ref=e371] [cursor=pointer]
+              - button "📂 详情" [ref=e372] [cursor=pointer]
+              - button "📥 导出" [ref=e373] [cursor=pointer]
+              - button "🗑 删除" [ref=e374] [cursor=pointer]
+          - row "2 1 摄像头 ⚠️ 等待启动 — 0 📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e375]:
+            - cell [ref=e376]:
+              - checkbox [ref=e377]
+            - cell "2" [ref=e378]
+            - cell "1" [ref=e379]
+            - cell "摄像头" [ref=e380]
+            - cell "⚠️" [ref=e381]
+            - cell "等待启动" [ref=e382]
+            - cell "—" [ref=e383]
+            - cell "0" [ref=e384]
+            - cell "📝 编辑 ▶ 启动 📂 详情 📥 导出 🗑 删除" [ref=e385]:
+              - button "📝 编辑" [ref=e386] [cursor=pointer]
+              - button "▶ 启动" [ref=e387] [cursor=pointer]
+              - button "📂 详情" [ref=e388] [cursor=pointer]
+              - button "📥 导出" [ref=e389] [cursor=pointer]
+              - button "🗑 删除" [ref=e390] [cursor=pointer]

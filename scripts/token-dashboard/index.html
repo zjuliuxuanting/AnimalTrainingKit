@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Token Monitor — Qwen 35B Local</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --text-dim: #8b949e;
+    --accent: #58a6ff;
+    --green-0: #161b22;
+    --green-1: #0e4429;
+    --green-2: #006d3c;
+    --green-3: #16c60;
+    --green-4: #2ea043;
+    --orange: #d29922;
+    --red: #f85149;
+    --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    padding: 24px;
+    min-height: 100vh;
+  }
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .header h1 {
+    font-size: 20px;
+    font-weight: 600;
+    color: #f0f6fc;
+  }
+  .header h1 span { color: var(--accent); }
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .status-badge.online { background: #006d3c33; color: #3fb950; border: 1px solid #238636; }
+  .status-badge.offline { background: #da363333; color: var(--red); border: 1px solid #f8514966; }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: currentColor;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  .grid { display: grid; gap: 16px; }
+  .grid-4 { grid-template-columns: repeat(4, 1fr); }
+  .grid-2 { grid-template-columns: repeat(2, 1fr); }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .card-title {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+  }
+  .card-value {
+    font-family: var(--font-mono);
+    font-size: 28px;
+    font-weight: 700;
+    color: #f0f6fc;
+    line-height: 1.2;
+  }
+  .card-sub {
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+  .card-value.accent { color: var(--accent); }
+  .card-value.green { color: #3fb950; }
+  .card-value.orange { color: var(--orange); }
+
+  /* Heatmap */
+  .heatmap-section { margin-top: 24px; }
+  .heatmap-section h2 {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    color: #f0f6fc;
+  }
+  .heatmap-container {
+    overflow-x: auto;
+    padding-bottom: 8px;
+  }
+  .heatmap-grid {
+    display: inline-grid;
+    grid-template-columns: 60px repeat(53, 13px);
+    gap: 3px;
+  }
+  .heatmap-grid.weeks-52 { grid-template-columns: 60px repeat(52, 13px); }
+  .heatmap-grid.weeks-51 { grid-template-columns: 60px repeat(51, 13px); }
+  .heatmap-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-end;
+    padding-right: 8px;
+    padding-top: 2px;
+    height: 17px;
+  }
+  .heatmap-cell {
+    width: 13px;
+    height: 13px;
+    border-radius: 2px;
+    cursor: pointer;
+    position: relative;
+  }
+  .heatmap-cell:hover { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .heatmap-cell[data-level="0"] { background: var(--green-0); }
+  .heatmap-cell[data-level="1"] { background: var(--green-1); }
+  .heatmap-cell[data-level="2"] { background: var(--green-2); }
+  .heatmap-cell[data-level="3"] { background: var(--green-3); }
+  .heatmap-cell[data-level="4"] { background: var(--green-4); }
+  .tooltip {
+    position: fixed;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: var(--text);
+    pointer-events: none;
+    z-index: 100;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    max-width: 240px;
+    display: none;
+  }
+  .tooltip .tt-date { font-weight: 600; color: #f0f6fc; margin-bottom: 4px; }
+  .tooltip .tt-row { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; }
+  .tooltip .tt-label { color: var(--text-dim); }
+  .tooltip .tt-val { font-family: var(--font-mono); font-weight: 600; }
+
+  /* Session log */
+  .log-section { margin-top: 24px; }
+  .log-section h2 {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    color: #f0f6fc;
+  }
+  .log-table { width: 100%; border-collapse: collapse; }
+  .log-table th {
+    text-align: left;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .log-table td {
+    padding: 10px 12px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    border-bottom: 1px solid var(--border);
+  }
+  .log-table tr:hover td { background: #1c2128; }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .badge-stream { background: #006d3c33; color: #3fb950; border: 1px solid #238636; }
+  .badge-nostream { background: #30363d; color: var(--text-dim); border: 1px solid var(--border); }
+
+  /* Context bar */
+  .context-bar-container { margin-top: 12px; }
+  .context-bar-bg {
+    width: 100%; height: 8px;
+    background: #21262d;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .context-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.5s ease, background 0.3s ease;
+  }
+  .context-bar-fill.safe { background: #3fb950; }
+  .context-bar-fill.warn { background: #d29922; }
+  .context-bar-fill.danger { background: #f85149; }
+
+  /* Model info */
+  .model-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .model-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .model-item .label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; }
+  .model-item .val {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    color: #f0f6fc;
+  }
+
+  .refresh-bar {
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    font-size: 12px;
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+  }
+  .spinner {
+    display: inline-block;
+    width: 12px; height: 12px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  @media (max-width: 900px) {
+    .grid-4 { grid-template-columns: repeat(2, 1fr); }
+    .grid-2 { grid-template-columns: 1fr; }
+    .model-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1><span>◉</span> Token Monitor — <span>Qwen 35B</span> Local</h1>
+  <div id="status" class="status-badge offline"><span class="dot"></span> Checking...</div>
+</div>
+
+<!-- Top stats row -->
+<div class="grid grid-4" id="statsRow">
+  <div class="card">
+    <div class="card-title">Request Count (Today)</div>
+    <div class="card-value" id="statRequests">—</div>
+    <div class="card-sub" id="statRequestsSub">Loading...</div>
+  </div>
+  <div class="card">
+    <div class="card-title">Input Tokens</div>
+    <div class="card-value accent" id="statInput">—</div>
+    <div class="card-sub" id="statInputSub">—</div>
+  </div>
+  <div class="card">
+    <div class="card-title">Output Tokens</div>
+    <div class="card-value green" id="statOutput">—</div>
+    <div class="card-sub" id="statOutputSub">—</div>
+  </div>
+  <div class="card">
+    <div class="card-title">Context Usage</div>
+    <div class="card-value orange" id="statContext">—</div>
+    <div class="context-bar-container">
+      <div class="context-bar-bg"><div class="context-bar-fill safe" id="contextBar" style="width:0%"></div></div>
+    </div>
+    <div class="card-sub" id="statContextSub">—</div>
+  </div>
+</div>
+
+<!-- Cached tokens + model info -->
+<div class="grid grid-2" style="margin-top:16px;">
+  <div class="card">
+    <div class="card-title">Cached Input Tokens (KV Cache Hit)</div>
+    <div class="card-value green" id="statCached">—</div>
+    <div class="card-sub" id="statCachedSub">Cache hit saves LLM compute</div>
+  </div>
+  <div class="card">
+    <div class="card-title">Model Info</div>
+    <div class="model-grid" id="modelInfo">
+      <div class="model-item"><span class="label">Model</span><span class="val" id="miModel">—</span></div>
+      <div class="model-item"><span class="label">Parameters</span><span class="val" id="miParams">—</span></div>
+      <div class="model-item"><span class="label">Context</span><span class="val" id="miCtx">—</span></div>
+      <div class="model-item"><span class="label">Quantization</span><span class="val" id="miQuant">—</span></div>
+      <div class="model-item"><span class="label">Vocab</span><span class="val" id="miVocab">—</span></div>
+      <div class="model-item"><span class="label">Trained Tokens</span><span class="val" id="miTrained">—</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- Heatmap -->
+<div class="heatmap-section">
+  <h2>Token Heatmap — Last 12 Weeks (by Date)</h2>
+  <div class="heatmap-container">
+    <div class="heatmap-grid" id="heatmapGrid"></div>
+  </div>
+</div>
+
+<!-- Session log -->
+<div class="log-section">
+  <h2>Recent Requests</h2>
+  <div class="card" style="padding:0;overflow:hidden;">
+    <table class="log-table" id="logTable">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Input</th>
+          <th>Output</th>
+          <th>Cached</th>
+          <th>Total</th>
+          <th>Type</th>
+        </tr>
+      </thead>
+      <tbody id="logBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+<div class="refresh-bar" id="refreshBar">Idle</div>
+
+<script>
+const API = 'http://localhost:8100';
+const LLAMA_PORT = 8899;
+const MODEL_MAX_CTX = 256000;
+
+// ── Format helpers ──
+function fmt(n) {
+  if (n >= 1e6) return (n/1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n/1e3).toFixed(1) + 'K';
+  return n?.toLocaleString?.() ?? '—';
+}
+function fmtFull(n) { return n?.toLocaleString?.() ?? '—'; }
+function dateStr(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  const h = String(d.getUTCHours()).padStart(2,'0');
+  const m = String(d.getUTCMinutes()).padStart(2,'0');
+  return `${h}:${m}`;
+}
+
+// ── Status ──
+async function checkLlama() {
+  try {
+    const r = await fetch(`http://localhost:${LLAMA_PORT}/health`);
+    if (r.ok) {
+      document.getElementById('status').className = 'status-badge online';
+      document.getElementById('status').innerHTML = '<span class="dot"></span> llama.cpp Online';
+      return true;
+    }
+  } catch {}
+  document.getElementById('status').className = 'status-badge offline';
+  document.getElementById('status').innerHTML = '<span class="dot"></span> llama.cpp Offline';
+  return false;
+}
+
+// ── Model info ──
+async function fetchModelInfo() {
+  try {
+    const r = await fetch(`http://localhost:${LLAMA_PORT}/v1/models`);
+    const j = await r.json();
+    // llama.cpp /v1/models returns { data: [{ id, capabilities, ... }] }
+    // Also try our proxy's format: { data: [{ id, display_name, ... }] }
+    const models = j.data || [];
+    if (models.length === 0) return;
+    const m = models[0];
+    document.getElementById('miModel').textContent = m.id || m.display_name || '—';
+    // We know the model details from our setup
+    document.getElementById('miParams').textContent = '35.5B';
+    document.getElementById('miCtx').textContent = fmt(MODEL_MAX_CTX) + ' tokens';
+    document.getElementById('miQuant').textContent = 'IQ3_XXS';
+    document.getElementById('miVocab').textContent = '248,320';
+    document.getElementById('miTrained').textContent = '262,144';
+  } catch (e) {
+    console.warn('Model info fetch failed:', e);
+  }
+}
+
+// ── Token data from JSONL ──
+let tokenRecords = [];
+
+async function loadTokenData() {
+  // Fetch from local server
+  try {
+    const r = await fetch(`${API}/api/tokens`);
+    if (r.ok) {
+      tokenRecords = await r.json();
+    }
+  } catch (e) {
+    console.warn('Token data fetch failed:', e);
+  }
+  renderStats();
+  renderHeatmap();
+  renderLog();
+}
+
+// ── Render stats ──
+function renderStats() {
+  const today = new Date().toISOString().slice(0, 10);
+  const todayRecords = tokenRecords.filter(r => r.timestamp?.startsWith(today));
+
+  let totalIn = 0, totalOut = 0, totalCached = 0;
+  let maxPrompt = 0;
+
+  todayRecords.forEach(r => {
+    totalIn += r.inputTokens || 0;
+    totalOut += r.outputTokens || 0;
+    totalCached += r.cachedInputTokens || 0;
+    if (r.inputTokens) maxPrompt = Math.max(maxPrompt, r.inputTokens);
+  });
+
+  document.getElementById('statRequests').textContent = todayRecords.length;
+  document.getElementById('statInput').textContent = fmt(totalIn);
+  document.getElementById('statOutput').textContent = fmt(totalOut);
+  document.getElementById('statCached').textContent = fmt(totalCached);
+
+  // Context bar: max prompt tokens as % of model context
+  const ctxPct = MODEL_MAX_CTX > 0 ? (maxPrompt / MODEL_MAX_CTX * 100) : 0;
+  const bar = document.getElementById('contextBar');
+  bar.style.width = Math.min(ctxPct, 100) + '%';
+  bar.className = 'context-bar-fill ' + (ctxPct < 50 ? 'safe' : ctxPct < 80 ? 'warn' : 'danger');
+
+  document.getElementById('statRequestsSub').textContent = `today`;
+  document.getElementById('statInputSub').textContent = `avg ${fmt(totalIn / Math.max(todayRecords.length, 1))} per request`;
+  document.getElementById('statOutputSub').textContent = `avg ${fmt(totalOut / Math.max(todayRecords.length, 1))} per request`;
+  document.getElementById('statContextSub').textContent = `peak context: ${fmt(maxPrompt)} / ${fmt(MODEL_MAX_CTX)} (${ctxPct.toFixed(1)}%)`;
+  document.getElementById('statContext').textContent = ctxPct > 0 ? ctxPct.toFixed(1) + '%' : '—';
+  document.getElementById('statCachedSub').textContent = `${(totalCached / Math.max(totalIn, 1) * 100).toFixed(1)}% cache hit rate`;
+}
+
+// ── Heatmap ──
+function renderHeatmap() {
+  const grid = document.getElementById('heatmapGrid');
+  grid.innerHTML = '';
+
+  // Group by date
+  const byDate = {};
+  tokenRecords.forEach(r => {
+    const d = r.timestamp?.slice(0, 10);
+    if (!d) return;
+    if (!byDate[d]) byDate[d] = { in: 0, out: 0, cached: 0 };
+    byDate[d].in += r.inputTokens || 0;
+    byDate[d].out += r.outputTokens || 0;
+    byDate[d].cached += r.cachedInputTokens || 0;
+  });
+
+  const dates = Object.keys(byDate).sort();
+  if (dates.length === 0) {
+    grid.innerHTML = '<div style="padding:20px;color:#8b949e;">No data yet</div>';
+    return;
+  }
+
+  // Determine week structure from first date's week
+  const weekNum = (d) => {
+    const date = new Date(d + 'T00:00:00');
+    const start = new Date(date.getFullYear(), 0, 1);
+    const yd = Math.floor((date - start) / 86400000);
+    return Math.ceil((start.getDay() + 1 + yd) / 7);
+  };
+
+  // Group consecutive dates into weeks
+  const weeks = [];
+  let currentWeek = [];
+  let lastWeekNum = weekNum(dates[0]);
+
+  dates.forEach(d => {
+    const wn = weekNum(d);
+    // Detect week boundary (jump > 7 days means new week)
+    const prev = new Date(dates[dates.indexOf(d) - 1] + 'T00:00:00');
+    const cur = new Date(d + 'T00:00:00');
+    const diffDays = Math.floor((cur - prev) / 86400000);
+
+    if (weeks.length === 0) {
+      currentWeek.push(d);
+    } else if (diffDays <= 7) {
+      currentWeek.push(d);
+    } else {
+      weeks.push(currentWeek);
+      currentWeek = [d];
+    }
+  });
+  if (currentWeek.length > 0) weeks.push(currentWeek);
+
+  // Day labels
+  const dayLabels = ['Mon', '', '', '', 'Fri', '', ''];
+  dayLabels.forEach((label, i) => {
+    const div = document.createElement('div');
+    div.className = 'heatmap-label';
+    div.textContent = label;
+    grid.appendChild(div);
+  });
+
+  // Fill weeks
+  weeks.forEach((week, wi) => {
+    for (let di = 0; di < 7; di++) {
+      const d = week[di];
+      if (!d) {
+        // Empty cell
+        const cell = document.createElement('div');
+        cell.className = 'heatmap-cell';
+        cell.style.visibility = 'hidden';
+        cell.style.opacity = '0';
+        grid.appendChild(cell);
+        continue;
+      }
+      const data = byDate[d];
+      const totalTokens = data.in + data.out;
+      // Determine level
+      let level = 0;
+      if (data.in > 0 || data.out > 0) level = 1;
+      if (totalTokens > 5000) level = 2;
+      if (totalTokens > 50000) level = 3;
+      if (totalTokens > 200000) level = 4;
+
+      const cell = document.createElement('div');
+      cell.className = 'heatmap-cell';
+      cell.setAttribute('data-level', level);
+      cell.setAttribute('data-date', d);
+      cell.setAttribute('data-in', data.in);
+      cell.setAttribute('data-out', data.out);
+      cell.setAttribute('data-cached', data.cached);
+      cell.setAttribute('data-total', totalTokens);
+
+      cell.addEventListener('mouseenter', showTooltip);
+      cell.addEventListener('mouseleave', hideTooltip);
+      cell.addEventListener('mousemove', moveTooltip);
+      grid.appendChild(cell);
+    }
+  });
+
+  // Legend
+  const legend = document.createElement('div');
+  legend.style.cssText = 'display:flex;align-items:center;gap:4px;margin-top:8px;font-size:11px;color:#8b949e;justify-content:flex-end;';
+  ['Less', 'Less', 'More', 'More', 'Lots'].forEach((label, i) => {
+    const c = document.createElement('div');
+    c.className = 'heatmap-cell';
+    c.setAttribute('data-level', i);
+    c.style.width = '13px'; c.style.height = '13px'; c.style.borderRadius = '2px';
+    legend.appendChild(c);
+  });
+  grid.appendChild(legend);
+}
+
+function showTooltip(e) {
+  const tt = document.getElementById('tooltip');
+  const d = e.target.dataset;
+  const date = new Date(d.date + 'T00:00:00');
+  const opts = { year: 'numeric', month: 'long', day: 'numeric' };
+  tt.innerHTML = `
+    <div class="tt-date">${date.toLocaleDateString('zh-CN', opts)}</div>
+    <div class="tt-row"><span class="tt-label">Input</span><span class="tt-val">${fmtFull(+d.in)}</span></div>
+    <div class="tt-row"><span class="tt-label">Output</span><span class="tt-val">${fmtFull(+d.out)}</span></div>
+    <div class="tt-row"><span class="tt-label">Cached</span><span class="tt-val">${fmtFull(+d.cached)}</span></div>
+    <div class="tt-row"><span class="tt-label">Total</span><span class="tt-val">${fmtFull(+d.total)}</span></div>
+  `;
+  tt.style.display = 'block';
+}
+function hideTooltip() { document.getElementById('tooltip').style.display = 'none'; }
+function moveTooltip(e) {
+  const tt = document.getElementById('tooltip');
+  const x = e.clientX + 12;
+  const y = e.clientY - 10;
+  tt.style.left = Math.min(x, window.innerWidth - 260) + 'px';
+  tt.style.top = y + 'px';
+}
+
+// ── Log table ──
+function renderLog() {
+  const tbody = document.getElementById('logBody');
+  tbody.innerHTML = '';
+  const recent = tokenRecords.slice(-30).reverse();
+  recent.forEach(r => {
+    const tr = document.createElement('tr');
+    const total = (r.inputTokens || 0) + (r.outputTokens || 0);
+    tr.innerHTML = `
+      <td>${dateStr(r.timestamp)}</td>
+      <td>${fmt(r.inputTokens)}</td>
+      <td>${fmt(r.outputTokens)}</td>
+      <td>${fmt(r.cachedInputTokens)}</td>
+      <td>${fmt(total)}</td>
+      <td><span class="badge ${r.streaming ? 'badge-stream' : 'badge-nostream'}">${r.streaming ? 'stream' : 'non-stream'}</span></td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+// ── Main ──
+async function init() {
+  const alive = await checkLlama();
+  if (!alive) {
+    document.getElementById('refreshBar').innerHTML = '<span class="spinner"></span> llama.cpp not responding';
+    return;
+  }
+  await fetchModelInfo();
+  await loadTokenData();
+  document.getElementById('refreshBar').textContent = '✓ Ready';
+}
+
+init();
+</script>
+</body>
+</html>

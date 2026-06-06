@@ -112,3 +112,49 @@ class TestExportCSV:
         assert len(rows) == 2
         assert rows[0]["事件类型"] == "click"
         assert rows[1]["事件类型"] == "release"
+
+
+class TestCSVColumnNamesChinese:
+    """回归测试 R5：CSV 列名必须是中文（自动化替代手动检查）"""
+
+    def test_all_required_columns_chinese(self, tmp_path):
+        """所有必需列名都是中文"""
+        from data.export import export_csv
+        records = [
+            {
+                "session_id": "s1",
+                "subject_id": "M01",
+                "event_type": "click",
+                "ts_ms": 1000,
+                "session_name": "测试",
+            }
+        ]
+        csv_path = str(tmp_path / "columns.csv")
+        export_csv(records, csv_path)
+
+        with open(csv_path, "r", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            fieldnames = reader.fieldnames
+
+        # 关键列名必须是中文
+        assert "实验编号" in fieldnames, "session_id 应翻译为 实验编号"
+        assert "事件类型" in fieldnames, "event_type 应翻译为 事件类型"
+        assert "时间戳" in fieldnames or "时间" in fieldnames, "ts_ms 应翻译为 时间戳"
+
+    def test_no_english_column_names(self, tmp_path):
+        """不应出现英文列名"""
+        from data.export import export_csv
+        records = [
+            {"session_id": "s1", "event_type": "click", "ts_ms": 1000, "session_name": "测试"}
+        ]
+        csv_path = str(tmp_path / "no_english.csv")
+        export_csv(records, csv_path)
+
+        with open(csv_path, "r", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            fieldnames = reader.fieldnames
+
+        # 不应出现的英文列名
+        forbidden_english = ["session_id", "event_type", "ts_ms", "subject_id"]
+        for col in forbidden_english:
+            assert col not in fieldnames, f"不应出现英文列名: {col}"

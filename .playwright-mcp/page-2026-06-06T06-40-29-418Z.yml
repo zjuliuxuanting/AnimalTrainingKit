@@ -1,0 +1,74 @@
+- generic [active] [ref=e1]:
+  - navigation [ref=e5]:
+    - heading "🧪 行为学训练盒" [level=1] [ref=e6]
+    - generic [ref=e7]:
+      - generic [ref=e394]: 📋 当前实验：综合管线测试（T03）
+      - generic [ref=e8]: 服务运行中
+  - generic [ref=e9]:
+    - generic [ref=e10] [cursor=pointer]: 🧪 实验管理
+    - generic [ref=e395] [cursor=pointer]: 📷 摄像头
+    - generic [ref=e11] [cursor=pointer]: 📡 设备
+    - generic [ref=e396] [cursor=pointer]: 🔀 流程编辑
+    - generic [ref=e12] [cursor=pointer]: 📊 运行监控
+    - generic [ref=e13] [cursor=pointer]: 📈 数据图表
+  - generic [ref=e419]:
+    - generic [ref=e420]:
+      - generic [ref=e421]:
+        - heading "实验流程编辑器" [level=3] [ref=e422]
+        - generic [ref=e423]:
+          - button "↩ 撤销" [ref=e424] [cursor=pointer]
+          - button "↪ 重做" [ref=e425] [cursor=pointer]
+          - button "💾 保存流程" [ref=e426] [cursor=pointer]
+          - button "📂 加载流程" [ref=e427] [cursor=pointer]
+          - button "✓ 校验" [ref=e428] [cursor=pointer]
+          - button "▶ 运行流程" [ref=e429] [cursor=pointer]
+      - paragraph [ref=e430]: 💡 从左侧拖拽节点到画布，连接节点来编排实验流程。开始和结束节点已固定在画布上。
+    - generic [ref=e431]:
+      - generic [ref=e432]:
+        - heading "节点面板" [level=3] [ref=e433]
+        - generic [ref=e434]:
+          - generic [ref=e435]: 信号输入
+          - generic "⚡ 触发信号 — 点击放置，选择信号源事件" [ref=e436]: ⚡ 触发信号
+          - generic [ref=e437]: 流程控制
+          - generic "⏱ 延时等待 — 点击放置，设置等待时长" [ref=e438]: ⏱ 延时等待
+          - generic "🔀 条件判断 — 点击放置，设置判断条件" [ref=e439]: 🔀 条件判断
+          - generic "🔄 循环 — 点击放置，设置循环参数" [ref=e440]: 🔄 循环
+          - generic [ref=e441]: 动作执行
+          - generic "🛠 执行动作 — 点击放置，配置执行器" [ref=e442]: 🛠 执行动作
+          - generic "📝 记录事件 — 点击放置，记录实验数据" [ref=e443]: 📝 记录事件
+          - generic "⏹ 记录终止 — 点击放置，1进0出，记录后终止" [ref=e444]: ⏹ 记录终止
+          - generic [ref=e445]: 逻辑运算
+          - generic "📦 逻辑与 — 点击放置，所有输入到齐才输出" [ref=e446]: 📦 逻辑与
+          - generic "❌ 逻辑非 — 点击放置，信号反转" [ref=e447]: ❌ 逻辑非
+          - generic "🔀 逻辑分叉 — 点击放置，1入2出无条件复制信号" [ref=e448]: 🔀 逻辑分叉
+          - generic [ref=e449]: 特殊
+          - generic "👁 旁路探针 — 点击放置，0入0出独立监听信号源" [ref=e450]: 👁 旁路探针
+      - generic [ref=e452]:
+        - img
+        - generic:
+          - generic [ref=e458]:
+            - generic [ref=e459]: 🔴 开始
+            - generic [ref=e460]: start
+            - generic "点击此处拖出连线" [ref=e461]
+          - generic [ref=e462]:
+            - generic [ref=e463]: ⏹ 结束
+            - generic [ref=e464]: end
+            - generic "点击此处拖出连线" [ref=e465]
+          - generic [ref=e466]:
+            - generic [ref=e467]: ⚡ ⚡ 触发信号
+            - generic [ref=e468]: trigger
+            - generic "点击此处拖出连线" [ref=e469]
+            - generic "点击此处拖出连线" [ref=e470]
+          - generic [ref=e471]:
+            - generic [ref=e472]: 📝 📝 记录事件
+            - generic [ref=e473]: record
+            - generic "点击此处拖出连线" [ref=e474]
+            - generic "点击此处拖出连线" [ref=e475]
+          - generic [ref=e476]:
+            - generic [ref=e477]: 🔄 🔄 循环
+            - generic [ref=e478]: loop
+            - generic "点击此处拖出连线" [ref=e479]
+            - generic "循环体" [ref=e480]:
+              - generic [ref=e481]: 循环体
+            - generic "退出" [ref=e483]:
+              - generic [ref=e484]: 退出

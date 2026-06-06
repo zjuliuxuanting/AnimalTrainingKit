@@ -52,6 +52,11 @@ document.querySelectorAll('.tab').forEach(tab => {
       toast('请先在实验管理中「编辑」或「启动」一个启用了摄像头的实验', 'warn');
       return;
     }
+    // 流程标签页无实验时拦截点击（与摄像头标签页一致）
+    if (tab.dataset.tab === 'flow' && tab.classList.contains('tab-disabled')) {
+      toast('请先在实验管理中「编辑」一个实验', 'warn');
+      return;
+    }
     if (tab.dataset.tab !== 'camera' && typeof releaseCamera === 'function') {
       releaseCamera();
     }
@@ -59,9 +64,6 @@ document.querySelectorAll('.tab').forEach(tab => {
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
     document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
-    if (tab.dataset.tab === 'flow' && typeof initFixedNodes === 'function') {
-      initFixedNodes();
-    }
     if (tab.dataset.tab === 'experiment') {
       renderExperimentList();
     }
@@ -351,6 +353,21 @@ async function enterExperiment(expId) {
       badge.style.display = 'block';
     }
 
+    // G3-FIN-1: 设置流程编辑器的当前实验 ID
+    if (typeof currentExperimentId !== 'undefined') {
+      // 在 flow-editor.js 中定义的变量
+      currentExperimentId = expId;
+      // 更新流程编辑器访问状态
+      if (typeof updateFlowEditorAccess === 'function') {
+        updateFlowEditorAccess();
+      }
+    }
+
+    // G3-FIN-1: 自动加载实验关联的流程
+    if (typeof loadFlowFromExperiment === 'function') {
+      await loadFlowFromExperiment(expId);
+    }
+
     if (exp.trigger_camera) {
       if (typeof setCameraExperiment === 'function') {
         setCameraExperiment(expId, exp.name, true);
@@ -545,42 +562,51 @@ function loadFlowFile(filename) {
     .catch(e => toast('加载失败: ' + e.message, 'error'));
 }
 
-function runFlow() {
+async function runFlow() {
+  const btn = document.getElementById('btnRunFlow');
+  const origText = btn ? btn.textContent : '▶ 运行流程';
+
   const data = getFlowData();
   if (!data || !data.nodes || Object.keys(data.nodes).length === 0) {
     toast('请先在画布上添加节点', 'warn');
     return;
   }
-  document.getElementById('btnStop').disabled = false;
-  log('正在校验流程...', 'info');
-  fetch('/api/flows/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
-    .then(r => r.json())
-    .then(result => {
-      if (!result.valid) {
-        toast('流程有误: ' + result.errors.join('; '), 'error');
-        document.getElementById('btnStop').disabled = true;
-        return;
-      }
-      toast('流程校验通过', 'success');
-      return fetch('/api/experiment/run-flow', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ flow: data, duration: 10 }),
-      });
-    })
-    .then(r => r ? r.json() : null)
-    .then(data => {
-      if (data) {
-        toast('实验已启动', 'success');
-        log(`实验已启动`, 'info');
-        startMonitorPoll(data.session_id);
-        document.querySelector('[data-tab="monitor"]').click();
-      }
-    })
-    .catch(e => {
-      toast('运行失败: ' + e.message, 'error');
-      document.getElementById('btnStop').disabled = true;
+  if (!currentExperimentId) {
+    toast('请先在实验列表中选择一个实验（点击"📝 编辑"）', 'warn');
+    return;
+  }
+
+  // Disable button during operation
+  if (btn) { btn.disabled = true; btn.textContent = '启动中...'; }
+  log('正在保存并启动流程...', 'info');
+
+  try {
+    // Step 1: Save flow first
+    await api(`/api/experiments/${currentExperimentId}/flow/save`, {
+      method: 'POST',
+      body: JSON.stringify({ flow: data }),
     });
+    toast('✅ 流程已保存，正在启动实验...', 'success');
+
+    // Step 2: Start the experiment
+    const runResult = await api('/api/experiment/run-flow', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ experiment_id: currentExperimentId, duration: 10 }),
+    });
+
+    document.getElementById('btnStop').disabled = false;
+    toast('✅ 实验已启动，已切换到监控面板', 'success');
+    log('实验已启动', 'info');
+    startMonitorPoll(runResult.session_id);
+    document.querySelector('[data-tab="monitor"]').click();
+  } catch (e) {
+    toast('❌ 运行失败：' + e.message, 'error');
+    log('运行失败: ' + e.message, 'error');
+    document.getElementById('btnStop').disabled = true;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = origText; }
+  }
 }
 
 // === Device ===
@@ -625,3 +651,20 @@ async function disconnectDevice() {
 
 // Init
 renderExperimentList();
+
+// Bug #10: 页面加载时检查是否有运行中的实验，恢复监控轮询
+(async function restoreMonitorOnLoad() {
+  try {
+    const state = await api('/api/experiment/state');
+    if (state.engine === 'running' && state.session_id) {
+      currentSessionId = state.session_id;
+      startMonitorPoll(state.session_id);
+      document.getElementById('btnStop').disabled = false;
+      // Switch to monitor tab
+      const monitorTab = document.querySelector('[data-tab="monitor"]');
+      if (monitorTab) monitorTab.click();
+    }
+  } catch (e) {
+    // 服务不可用时静默失败
+  }
+})();

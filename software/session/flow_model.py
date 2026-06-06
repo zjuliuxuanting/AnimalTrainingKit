@@ -1,7 +1,7 @@
 """
 流程图数据模型 — 节点、边、流程图
 
-定义 V1 支持的 9 种节点类型及其参数 schema。
+定义 V1 支持的 8 种节点类型及其参数 schema。
 """
 
 from __future__ import annotations
@@ -20,9 +20,12 @@ class NodeType(str, Enum):
     CONDITION = "condition"
     EXECUTE = "execute"
     LOOP = "loop"
-    VARIABLE = "variable"
     RECORD = "record"
-    EXCEPTION = "exception"
+    RECORD_END = "record_end"
+    AND = "and"
+    NOT = "not"
+    FORK = "fork"
+    SNIFFER = "sniffer"
 
 
 class PortDirection(str, Enum):
@@ -80,16 +83,20 @@ class FlowNode:
                 NodePort(node_id=self.id, port_id="body", direction=PortDirection.OUT, label="循环体"),
                 NodePort(node_id=self.id, port_id="exit", direction=PortDirection.OUT, label="退出"),
             ]
-        if self.node_type == NodeType.EXCEPTION:
+        if self.node_type == NodeType.FORK:
             return [
-                NodePort(node_id=self.id, port_id="error", direction=PortDirection.OUT, label="异常"),
-                NodePort(node_id=self.id, port_id="default", direction=PortDirection.OUT, label="默认"),
+                NodePort(node_id=self.id, port_id="continue", direction=PortDirection.OUT, label="继续"),
+                NodePort(node_id=self.id, port_id="stop", direction=PortDirection.OUT, label="记录终止"),
             ]
+        if self.node_type in (NodeType.SNIFFER, NodeType.RECORD_END):
+            return []
         return [NodePort(node_id=self.id, port_id="out", direction=PortDirection.OUT, label="")]
 
     @property
     def input_ports(self) -> List[NodePort]:
         if self.node_type == NodeType.START:
+            return []
+        if self.node_type == NodeType.SNIFFER:
             return []
         return [NodePort(node_id=self.id, port_id="in", direction=PortDirection.IN, label="")]
 
@@ -105,9 +112,16 @@ class FlowNode:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> FlowNode:
+        node_type_str = data.get("node_type", "trigger")
+        try:
+            node_type = NodeType(node_type_str)
+        except ValueError:
+            # 容错：旧数据中可能存在已删除的节点类型（如 OR）
+            # 降级为 RECORD 节点，保留原始 label 和 params
+            node_type = NodeType.RECORD
         return cls(
             id=data.get("id", ""),
-            node_type=NodeType(data.get("node_type", "trigger")),
+            node_type=node_type,
             label=data.get("label", ""),
             params=data.get("params", {}),
             x=data.get("x", 0.0),

@@ -48,6 +48,7 @@ class EngineContext:
     counters: Dict[str, int] = field(default_factory=dict)
     loop_iterations: Dict[str, int] = field(default_factory=dict)
     trigger_history: Dict[str, float] = field(default_factory=dict)
+    signal_history: Dict[str, float] = field(default_factory=dict)
     pending_actions: int = 0
     default_exception_policy: ExceptionPolicy = ExceptionPolicy.TERMINATE
 
@@ -107,6 +108,13 @@ class Engine:
         self._on_engine_event: Optional[Callable[[str, Dict[str, Any]], None]] = None
         self._on_state_change: Optional[Callable[[EngineState, EngineState], None]] = None
 
+        # LOOP body 深度计数器（支持嵌套循环）
+        self._loop_body_depth: int = 0
+
+        # SNIFFER 后台监听任务列表（G3-FIN-3）
+        self._sniffer_configs: list[dict] = []
+        self._signal_callback: Optional[Callable] = None
+
     @property
     def state(self) -> EngineState:
         return self._state
@@ -146,6 +154,10 @@ class Engine:
         session.start()
         self._set_state(EngineState.RUNNING)
         self._run_task = asyncio.create_task(self._run_loop())
+
+        # G3-FIN-3: 扫描 SNIFFER 节点并启动后台监听协程
+        await self._start_sniffers()
+
         logger.info(f"引擎启动: session={session.id}")
 
     async def stop(self):
@@ -157,6 +169,8 @@ class Engine:
             self._run_task = None
         if self._ctx:
             self._ctx.session.stop()
+        # G3-FIN-3: 清理 SNIFFER 后台监听任务
+        await self._cleanup_sniffers()
         self._set_state(EngineState.STOPPED)
         logger.info("引擎已停止")
 
@@ -221,6 +235,13 @@ class Engine:
                 logger.exception("调度循环异常")
 
     async def _handle_event(self, event: EngineEvent):
+        # 记录信号历史 + 派发 SNIFFER（需在流程处理前，防止 stop() 提前清理配置）
+        if event.is_signal:
+            signal_id = event.data.get("signal_id", "")
+            if signal_id:
+                self._ctx.signal_history[signal_id] = time.time()
+            self._dispatch_to_sniffers(event)
+
         current_node = self._ctx.flow.nodes.get(self._ctx.current_node_id)
         if not current_node:
             return
@@ -295,20 +316,30 @@ class Engine:
     async def _step_to_next(self, node: FlowNode):
         outgoing = self._ctx.flow.get_outgoing_edges(node.id)
         if not outgoing:
-            if node.node_type != NodeType.END:
+            if node.node_type == NodeType.END:
+                await self.stop()
+            elif self._loop_body_depth > 0:
+                # 循环体内节点无出边，静默返回（由 LOOP 控制流程）
+                logger.debug(f"LOOP body 内节点 [{node.id}] 无出边，返回")
+            else:
                 logger.warning(f"节点 [{node.id}] 没有出边，流程终止")
-            await self.stop()
+                await self.stop()
             return
 
-        edge = outgoing[0]
-        next_node = self._ctx.flow.nodes.get(edge.target.node_id)
-        if next_node:
-            await self._execute_node(next_node, edge)
+        # 支持多输出节点：遍历所有出边并执行
+        for edge in outgoing:
+            next_node = self._ctx.flow.nodes.get(edge.target.node_id)
+            if next_node:
+                await self._execute_node(next_node, edge)
 
     async def _execute_node(self, node: FlowNode, incoming_edge: Edge):
         logger.debug(f"执行节点: [{node.id}] {node.node_type.value}")
 
         if node.node_type == NodeType.END:
+            # LOOP body 内不允许走到 END，防止流程终止
+            if self._loop_body_depth > 0:
+                logger.debug(f"LOOP body mode (depth={self._loop_body_depth}): 跳过 END 节点 [{node.id}]")
+                return
             self._emit_engine_event("node_executed", {"node_id": node.id, "type": "end"})
             await self.stop()
             return
@@ -325,14 +356,11 @@ class Engine:
         elif node.node_type == NodeType.LOOP:
             await self._execute_loop(node)
 
-        elif node.node_type == NodeType.VARIABLE:
-            await self._execute_variable(node)
-
         elif node.node_type == NodeType.RECORD:
             await self._execute_record(node)
 
-        elif node.node_type == NodeType.EXCEPTION:
-            await self._execute_exception_handler(node)
+        elif node.node_type == NodeType.RECORD_END:
+            await self._execute_record_end(node)
 
         elif node.node_type == NodeType.START:
             await self._step_to_next(node)
@@ -340,39 +368,70 @@ class Engine:
         elif node.node_type == NodeType.TRIGGER:
             self._ctx.current_node_id = node.id
 
+        elif node.node_type == NodeType.AND:
+            await self._execute_and(node, incoming_edge)
+
+        elif node.node_type == NodeType.NOT:
+            await self._execute_not(node)
+
+        elif node.node_type == NodeType.FORK:
+            await self._execute_fork(node)
+
+        elif node.node_type == NodeType.SNIFFER:
+            # SNIFFER 0入0出，不参与主流程，无事可做
+            pass
+
     async def _execute_delay(self, node: FlowNode):
-        ms = node.params.get("duration_ms", 1000)
-        logger.info(f"延时 {ms}ms: [{node.id}]")
-        await asyncio.sleep(ms / 1000.0)
-        self._emit_engine_event("node_executed", {"node_id": node.id, "type": "delay", "duration_ms": ms})
+        duration_s = node.params.get("duration_s", 1.0)
+        ms = duration_s * 1000.0
+        logger.info(f"延时 {duration_s}秒 ({ms}ms): [{node.id}]")
+        await asyncio.sleep(duration_s)
+        self._emit_engine_event("node_executed", {"node_id": node.id, "type": "delay", "duration_s": duration_s})
         await self._step_to_next(node)
 
     async def _execute_condition(self, node: FlowNode):
-        var_name = node.params.get("variable", "")
+        source = node.params.get("source", "trigger_count")
         operator = node.params.get("operator", "eq")
-        value = node.params.get("value", 0)
+        expected_value = node.params.get("value", 0)
 
-        current = self._ctx.get_variable(var_name, 0)
+        # Resolve actual value from the chosen data source
+        if source == "counter":
+            counter_name = node.params.get("counter_name", "default")
+            actual_value = self._ctx.counters.get(counter_name, 0)
+        else:
+            # trigger_count: use the incoming TRIGGER count from variables
+            trigger_key = f"trigger_count_{node.id}"
+            actual_value = self._ctx.get_variable(trigger_key, 0)
 
         result = False
         if operator == "eq":
-            result = current == value
+            result = actual_value == expected_value
+        elif operator == "neq":
+            result = actual_value != expected_value
         elif operator == "gt":
-            result = current > value
+            result = actual_value > expected_value
         elif operator == "lt":
-            result = current < value
+            result = actual_value < expected_value
         elif operator == "gte":
-            result = current >= value
+            result = actual_value >= expected_value
         elif operator == "lte":
-            result = current <= value
+            result = actual_value <= expected_value
+
+        # Write back to context for downstream nodes or logging
+        self._ctx.set_variable("condition_result", result)
+        self._ctx.set_variable("actual_value", actual_value)
+        self._ctx.set_variable("expected_value", expected_value)
 
         port_id = "true" if result else "false"
-        logger.info(f"条件判断 [{node.id}]: {var_name}({current}) {operator} {value} -> {port_id}")
+        logger.info(f"条件判断 [{node.id}]: source={source}, actual={actual_value} {operator} {expected_value} -> {port_id}")
 
         self._emit_engine_event("node_executed", {
             "node_id": node.id,
             "type": "condition",
-            "variable": var_name,
+            "source": source,
+            "actual_value": actual_value,
+            "expected_value": expected_value,
+            "operator": operator,
             "result": result,
         })
 
@@ -385,12 +444,10 @@ class Engine:
     async def _execute_action(self, node: FlowNode):
         actuator_id = node.params.get("actuator_id", "")
         action = node.params.get("action", "high")
-        duration_ms = node.params.get("duration_ms", 0)
 
         cmd = {
             "actuator_id": actuator_id,
             "action": action,
-            "duration_ms": duration_ms,
             "node_id": node.id,
         }
 
@@ -403,7 +460,7 @@ class Engine:
                 success = False
                 self._handle_action_failure(node, cmd, str(e))
         else:
-            logger.info(f"执行动作 (dry): {actuator_id} -> {action} ({duration_ms}ms)")
+            logger.info(f"执行动作 (dry): {actuator_id} -> {action}")
 
         self._emit_engine_event("node_executed", {
             "node_id": node.id,
@@ -413,59 +470,81 @@ class Engine:
             "success": success,
         })
 
-        if duration_ms > 0:
-            await asyncio.sleep(duration_ms / 1000.0)
-
         await self._step_to_next(node)
 
     async def _execute_loop(self, node: FlowNode):
         max_iter = node.params.get("max_iterations", 10)
-        timeout_ms = node.params.get("timeout_ms", 60000)
+        timeout_s = node.params.get("timeout_s", 0)
         counter_key = f"loop_{node.id}"
+        deadline_key = f"loop_deadline_{node.id}"
 
+        # 首次迭代时记录超时 deadline
+        if timeout_s > 0 and deadline_key not in self._ctx.variables:
+            self._ctx.variables[deadline_key] = time.time() + timeout_s
+
+        # 检查超时
+        if timeout_s > 0:
+            deadline = self._ctx.variables.get(deadline_key, 0)
+            if time.time() >= deadline:
+                logger.info(f"循环 [{node.id}] 超时 {timeout_s}秒，强制退出")
+                self._emit_engine_event("loop_timeout", {"node_id": node.id, "timeout_s": timeout_s})
+                await self._exit_loop_path(node, counter_key)
+                return
+
+        # 检查最大次数（max_iter <= 0 表示不限制次数，仅靠 timeout 控制）
         current = self._ctx.loop_iterations.get(counter_key, 0)
-        if current >= max_iter:
+        if max_iter > 0 and current >= max_iter:
             logger.info(f"循环 [{node.id}] 达到最大次数 {max_iter}，退出")
             self._emit_engine_event("loop_exit", {"node_id": node.id, "iterations": current})
-            for edge in self._ctx.flow.get_outgoing_edges(node.id):
-                if edge.source.port_id == "exit":
-                    next_node = self._ctx.flow.nodes.get(edge.target.node_id)
-                    if next_node:
-                        await self._execute_node(next_node, edge)
+            await self._exit_loop_path(node, counter_key)
             return
 
         self._ctx.loop_iterations[counter_key] = current + 1
-        logger.info(f"循环 [{node.id}]: 第 {current + 1}/{max_iter} 次迭代")
+        max_label = str(max_iter) if max_iter > 0 else "∞"
+        logger.info(f"循环 [{node.id}]: 第 {current + 1}/{max_label} 次迭代（超时 {timeout_s}秒）")
         self._emit_engine_event("loop_iteration", {"node_id": node.id, "iteration": current + 1})
 
+        # 执行 body 路径：增加深度计数，防止 body 内走到 END
+        self._loop_body_depth += 1
+        try:
+            body_edge = None
+            for edge in self._ctx.flow.get_outgoing_edges(node.id):
+                if edge.source.port_id == "body":
+                    body_edge = edge
+                    break
+
+            if body_edge:
+                next_node = self._ctx.flow.nodes.get(body_edge.target.node_id)
+                if next_node:
+                    await self._execute_node(next_node, body_edge)
+
+            # body 路径执行完成后，检查是否继续循环
+            should_continue = True
+            if timeout_s > 0 and time.time() >= self._ctx.variables.get(deadline_key, 0):
+                should_continue = False
+            if self._ctx.loop_iterations.get(counter_key, 0) >= max_iter and max_iter > 0:
+                should_continue = False
+
+            if should_continue:
+                await self._execute_loop(node)
+            else:
+                reason = "达到最大次数" if self._ctx.loop_iterations.get(counter_key, 0) >= max_iter else "超时"
+                logger.info(f"循环 [{node.id}] {reason}，退出")
+                self._emit_engine_event("loop_exit", {"node_id": node.id, "reason": reason})
+                await self._exit_loop_path(node, counter_key)
+        finally:
+            self._loop_body_depth -= 1
+
+    async def _exit_loop_path(self, node: FlowNode, counter_key: str):
+        """执行 LOOP 的退出分支并清理循环状态"""
+        deadline_key = f"loop_deadline_{node.id}"
+        self._ctx.variables.pop(deadline_key, None)
+        self._ctx.loop_iterations.pop(counter_key, None)
         for edge in self._ctx.flow.get_outgoing_edges(node.id):
-            if edge.source.port_id == "body":
+            if edge.source.port_id == "exit":
                 next_node = self._ctx.flow.nodes.get(edge.target.node_id)
                 if next_node:
                     await self._execute_node(next_node, edge)
-
-    async def _execute_variable(self, node: FlowNode):
-        var_name = node.params.get("name", "")
-        op = node.params.get("operation", "set")
-        value = node.params.get("value", 0)
-
-        if op == "set":
-            self._ctx.set_variable(var_name, value)
-        elif op == "inc":
-            current = self._ctx.get_variable(var_name, 0)
-            self._ctx.set_variable(var_name, current + 1)
-        elif op == "dec":
-            current = self._ctx.get_variable(var_name, 0)
-            self._ctx.set_variable(var_name, current - 1)
-
-        self._emit_engine_event("node_executed", {
-            "node_id": node.id,
-            "type": "variable",
-            "name": var_name,
-            "operation": op,
-            "value": self._ctx.get_variable(var_name),
-        })
-        await self._step_to_next(node)
 
     async def _execute_record(self, node: FlowNode):
         event_name = node.params.get("event_name", node.label)
@@ -474,13 +553,199 @@ class Engine:
             "ts_ms": int(time.time() * 1000),
             **{k: self._ctx.get_variable(k) for k in node.params.get("variables", [])},
         }
+
+        # 计数器操作（如果配置了 counter_name 和 counter_op）
+        counter_name = node.params.get("counter_name", "")
+        counter_op = node.params.get("counter_op", "")
+        if counter_name and counter_op:
+            if counter_op == "+1":
+                self._ctx.counters[counter_name] = self._ctx.counters.get(counter_name, 0) + 1
+            elif counter_op == "=0":
+                self._ctx.counters[counter_name] = 0
+            elif counter_op == "=1":
+                self._ctx.counters[counter_name] = 1
+            elif counter_op == "-1":
+                self._ctx.counters[counter_name] = self._ctx.counters.get(counter_name, 0) - 1
+            data["counter_name"] = counter_name
+            data["counter_op"] = counter_op
+            data["counter_value"] = self._ctx.counters[counter_name]
+
         self._ctx.session._record_event(event_name, data)
         self._emit_engine_event("node_executed", {"node_id": node.id, "type": "record", "event_name": event_name})
         await self._step_to_next(node)
 
-    async def _execute_exception_handler(self, node: FlowNode):
-        self._emit_engine_event("node_executed", {"node_id": node.id, "type": "exception_handler"})
+    async def _execute_and(self, node: FlowNode, incoming_edge: Edge):
+        """AND 节点：所有输入端口都收到信号后才触发输出。
+        
+        通过追踪入边信号状态实现。当所有入边都收到信号时，从输出端口继续执行。
+        """
+        incoming_edges = self._ctx.flow.get_incoming_edges(node.id)
+        if not incoming_edges:
+            logger.warning(f"AND 节点 [{node.id}] 没有入边，直接输出")
+            await self._step_to_next(node)
+            return
+
+        # 追踪每个入边的信号状态
+        signal_key = f"and_{node.id}"
+        if signal_key not in self._ctx.variables:
+            # 初始化：所有入边都未收到信号
+            self._ctx.variables[signal_key] = {
+                "received": set(),  # 已收到信号的入边索引
+                "total": len(incoming_edges),
+            }
+
+        # 标记当前入边已收到信号
+        incoming_idx = self._ctx.variables[signal_key]["received"]
+        # 找到当前入边在 incoming_edges 中的索引
+        for i, edge in enumerate(incoming_edges):
+            if edge.source.node_id == incoming_edge.source.node_id and edge.source.port_id == incoming_edge.source.port_id:
+                incoming_idx.add(i)
+                break
+
+        total = self._ctx.variables[signal_key]["total"]
+        received_count = len(incoming_idx)
+        logger.info(f"AND 节点 [{node.id}]: 收到 {received_count}/{total} 个输入信号")
+
+        if received_count >= total:
+            logger.info(f"AND 节点 [{node.id}]: 所有输入已收到，触发输出")
+            self._emit_engine_event("node_executed", {
+                "node_id": node.id,
+                "type": "and",
+                "signals_received": received_count,
+            })
+            # 重置状态，确保后续使用（如循环中再次经过 AND）时重新收集信号
+            self._ctx.variables.pop(signal_key, None)
+            await self._step_to_next(node)
+        else:
+            logger.info(f"AND 节点 [{node.id}]: 等待 {total - received_count} 个更多输入信号")
+
+    async def _execute_not(self, node: FlowNode):
+        """NOT 节点：等待信号消失后放行。
+
+        在 timeout_s 上限内持续检测 signal_id：
+        - 若检测到信号出现 → 重置等待计时
+        - 若 timeout_s 内无信号 → 条件满足，放行
+        """
+        signal_id = node.params.get("signal_id", "")
+        timeout_s = node.params.get("timeout_s", 5.0)
+        poll_interval = 0.1
+
+        logger.info(f"NOT 节点 [{node.id}]: 等待信号 {signal_id} 消失（超时 {timeout_s}秒）")
+
+        wait_start = time.time()
+        while time.time() - wait_start < timeout_s:
+            last_seen = self._ctx.signal_history.get(signal_id, 0)
+            if last_seen > wait_start:
+                logger.debug(f"NOT 节点 [{node.id}]: 检测到信号 {signal_id}，重置等待")
+                wait_start = time.time()
+            await asyncio.sleep(poll_interval)
+
+        logger.info(f"NOT 节点 [{node.id}]: 信号 {signal_id} 已消失 {timeout_s}秒，放行")
+        self._emit_engine_event("node_executed", {
+            "node_id": node.id,
+            "type": "not",
+            "signal_id": signal_id,
+        })
         await self._step_to_next(node)
+
+    async def _execute_record_end(self, node: FlowNode):
+        """RECORD_END 节点：记录事件后流程在此终止（1进0出）"""
+        event_name = node.params.get("event_name", node.label)
+        data = {
+            "node_id": node.id,
+            "ts_ms": int(time.time() * 1000),
+            **{k: self._ctx.get_variable(k) for k in node.params.get("variables", [])},
+        }
+
+        # 计数器操作（如果配置了 counter_name 和 counter_op）
+        counter_name = node.params.get("counter_name", "")
+        counter_op = node.params.get("counter_op", "")
+        if counter_name and counter_op:
+            if counter_op == "+1":
+                self._ctx.counters[counter_name] = self._ctx.counters.get(counter_name, 0) + 1
+            elif counter_op == "=0":
+                self._ctx.counters[counter_name] = 0
+            elif counter_op == "=1":
+                self._ctx.counters[counter_name] = 1
+            elif counter_op == "-1":
+                self._ctx.counters[counter_name] = self._ctx.counters.get(counter_name, 0) - 1
+            data["counter_name"] = counter_name
+            data["counter_op"] = counter_op
+            data["counter_value"] = self._ctx.counters[counter_name]
+
+        self._ctx.session._record_event(event_name, data)
+        self._emit_engine_event("node_executed", {
+            "node_id": node.id, "type": "record_end", "event_name": event_name,
+        })
+        # 0 outputs — flow stops on this branch, no _step_to_next
+
+    async def _execute_fork(self, node: FlowNode):
+        """FORK 节点：1入2出逻辑分叉。
+        
+        收到信号时无条件复制为两路输出（"继续"和"记录终止"）。
+        无配置参数，纯逻辑节点。
+        """
+        logger.info(f"FORK 节点 [{node.id}]: 信号分叉 — 同时触发「继续」和「记录终止」")
+        self._emit_engine_event("node_executed", {
+            "node_id": node.id,
+            "type": "fork",
+        })
+        # _step_to_next 已遍历所有出边，两路输出自然同时触发
+        await self._step_to_next(node)
+
+    async def _start_sniffers(self):
+        """G3-FIN-3: 扫描流程图中所有 SNIFFER 节点，存储配置供主循环派发"""
+        if not self._ctx:
+            return
+        flow = self._ctx.flow
+        for node in flow.nodes.values():
+            if node.node_type == NodeType.SNIFFER:
+                signal_id = node.params.get("signal_id", "")
+                event_name = node.params.get("event_name", "旁路记录")
+                if signal_id:
+                    self._sniffer_configs.append({
+                        "node_id": node.id,
+                        "signal_id": signal_id,
+                        "event_name": event_name,
+                    })
+                    logger.info(f"SNIFFER [{node.id}]: 注册监听 signal_id={signal_id}")
+
+    async def _cleanup_sniffers(self):
+        """G3-FIN-3: 清理所有 SNIFFER 配置"""
+        self._sniffer_configs.clear()
+        logger.info("SNIFFER 配置已清理")
+
+    def _dispatch_to_sniffers(self, event: EngineEvent):
+        """主循环派发事件给所有 SNIFFER 观察者（被动观察，不消费队列）"""
+        if not event.is_signal or not self._sniffer_configs:
+            return
+        for cfg in self._sniffer_configs:
+            event_signal_id = event.data.get("signal_id", "")
+            full_match = (
+                event_signal_id == cfg["signal_id"]
+                or f"{event.data.get('source_id', '')}:{event_signal_id}" == cfg["signal_id"]
+            )
+            if full_match:
+                logger.info(f"SNIFFER [{cfg['node_id']}]: 捕获信号 {cfg['signal_id']} → {cfg['event_name']}")
+                self._emit_engine_event("sniffer_captured", {
+                    "node_id": cfg["node_id"],
+                    "signal_id": cfg["signal_id"],
+                    "event_name": cfg["event_name"],
+                    "ts_ms": event.ts_ms,
+                })
+                if self._ctx:
+                    self._ctx.session._record_event(
+                        event_type=f"sniffer:{cfg['event_name']}",
+                        data={
+                            "signal_id": cfg["signal_id"],
+                            "event_name": cfg["event_name"],
+                            "raw": event.data,
+                        }
+                    )
+
+    def set_signal_callback(self, cb: Callable):
+        """设置外部信号回调，供 SNIFFER 等组件使用"""
+        self._signal_callback = cb
 
     def _handle_action_failure(self, node: FlowNode, cmd: Dict[str, Any], error: str):
         policy_str = node.params.get("on_failure", self._ctx.default_exception_policy.value)
@@ -516,15 +781,8 @@ class Engine:
         await self.stop()
 
     async def _handle_error(self, node: FlowNode, event: EngineEvent):
-        exception_handlers = [
-            n for n in self._ctx.flow.nodes.values()
-            if n.node_type == NodeType.EXCEPTION
-        ]
-        if exception_handlers:
-            await self._step_to_next(exception_handlers[0])
-        else:
-            self._ctx.session.error(event.data.get("message", "未知错误"))
-            await self.stop()
+        self._ctx.session.error(event.data.get("message", "未知错误"))
+        await self.stop()
 
     def _emit_engine_event(self, kind: str, data: Dict[str, Any]):
         if self._on_engine_event:

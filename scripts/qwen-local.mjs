@@ -1,0 +1,1 @@
+local-adapter/proxy.mjs

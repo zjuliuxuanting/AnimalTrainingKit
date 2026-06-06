@@ -63,6 +63,29 @@ from data.export import export_session_csv
 # 运行时控制默认端口
 DEFAULT_API_PORT = 8000
 
+# 全局 JSON 输出标志（由 main() 设置）
+_JSON_OUTPUT = False
+
+
+def output(data: dict, human_text: str = "") -> None:
+    """统一输出函数：根据 --json 标志选择输出格式
+
+    Args:
+        data: JSON 格式的数据字典
+        human_text: 人类可读的文本（当 --json 未启用时使用）
+    """
+    if _JSON_OUTPUT:
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+    elif human_text:
+        print(human_text)
+    else:
+        # 如果没有提供 human_text，尝试格式化输出 data
+        for key, value in data.items():
+            if isinstance(value, (list, dict)):
+                print(f"{key}: {json.dumps(value, ensure_ascii=False)}")
+            else:
+                print(f"{key}: {value}")
+
 
 def _init_db() -> tuple[Database, EventStore]:
     db_dir = os.path.join(PROJECT_ROOT, "data_store")
@@ -431,17 +454,27 @@ def cmd_camera_list(args: argparse.Namespace) -> int:
     try:
         from ui.camera import CameraSource
     except ImportError:
-        print("缺少 opencv-python，请安装: pip install opencv-python")
+        output({"error": "缺少 opencv-python，请安装: pip install opencv-python", "code": 2})
         return 2
 
     cameras = CameraSource.list_cameras()
     if not cameras:
-        print("未检测到可用摄像头")
+        output(
+            {"status": "empty", "cameras": [], "message": "未检测到可用摄像头"},
+            "未检测到可用摄像头"
+        )
         return 0
 
-    print(f"检测到 {len(cameras)} 个摄像头:")
-    for idx, name in cameras:
-        print(f"  [{idx}] {name}")
+    camera_list = [{"index": idx, "name": name} for idx, name in cameras]
+    output(
+        {
+            "status": "ok",
+            "count": len(camera_list),
+            "cameras": camera_list,
+        },
+        f"检测到 {len(cameras)} 个摄像头:\n"
+        + "\n".join(f"  [{idx}] {name}" for idx, name in cameras)
+    )
     return 0
 
 
@@ -450,17 +483,24 @@ def cmd_camera_test(args: argparse.Namespace) -> int:
     try:
         from ui.camera import CameraSource, HAS_CV2
     except ImportError:
-        print("缺少 opencv-python，请安装: pip install opencv-python")
+        output({"error": "缺少 opencv-python，请安装: pip install opencv-python", "code": 2})
         return 2
 
     if not HAS_CV2:
-        print("opencv-python 未安装")
+        output({"error": "opencv-python 未安装", "code": 2})
         return 2
 
     duration_s = args.seconds or 10
-    print(f"摄像头测试: camera_index={args.index}, {duration_s}s")
-    print("  检测到运动时输出 [运动] 日志")
-    print()
+    output(
+        {
+            "status": "starting",
+            "camera_index": args.index,
+            "duration_s": duration_s,
+            "message": "检测到运动时输出 [运动] 日志",
+        },
+        f"摄像头测试: camera_index={args.index}, {duration_s}s\n"
+        f"  检测到运动时输出 [运动] 日志\n"
+    )
 
     db, event_store = _init_db()
     session = Session()
@@ -480,7 +520,7 @@ def cmd_camera_test(args: argparse.Namespace) -> int:
     async def run():
         ok = await bus.start_all()
         if not ok:
-            print("摄像头启动失败")
+            output({"error": "摄像头启动失败", "code": 1})
             return
         session.start()
 
@@ -490,9 +530,6 @@ def cmd_camera_test(args: argparse.Namespace) -> int:
 
         await bus.stop_all()
         session.stop()
-
-        motion_events = [e for e in collected if "motion" in e.signal_id]
-        print(f"\n  运动事件: {len(motion_events)}")
 
     asyncio.run(run())
 
@@ -508,7 +545,19 @@ def cmd_camera_test(args: argparse.Namespace) -> int:
 
     raw_events = event_store.get_events(session.id)
     motion_events = [e for e in raw_events if "motion" in e.get("event_type", "")]
-    print(f"  入库事件: {len(raw_events)}（其中运动 {len(motion_events)})")
+
+    output(
+        {
+            "status": "completed",
+            "camera_index": args.index,
+            "session_id": session.id,
+            "total_events": len(raw_events),
+            "motion_events": len(motion_events),
+            "duration_s": duration_s,
+        },
+        f"\n  运动事件: {len(motion_events)}\n"
+        f"  入库事件: {len(raw_events)}（其中运动 {len(motion_events)})"
+    )
 
     db.close()
     return 0
@@ -528,10 +577,10 @@ def cmd_camera_config(args: argparse.Namespace) -> int:
                 x_str, y_str = point_str.strip().split(",")
                 points.append([int(x_str), int(y_str)])
             except (ValueError, TypeError):
-                print(f"[错误] 坐标格式无效: {point_str}，应为 x,y")
+                output({"error": f"坐标格式无效: {point_str}，应为 x,y", "code": 1})
                 return 1
         if len(points) < 3:
-            print("[错误] 区域至少需要 3 个顶点")
+            output({"error": "区域至少需要 3 个顶点", "code": 1})
             return 1
 
         zones = config.get("zones", [])
@@ -546,23 +595,54 @@ def cmd_camera_config(args: argparse.Namespace) -> int:
         config["camera_index"] = args.camera_index
         config["fps"] = args.fps
         _save_camera_config(config, exp_id)
-        print(f"区域已添加: {name} ({len(points)} 顶点, 事件={event})")
-        print(f"  camera_index={args.camera_index}, fps={args.fps}")
+        output(
+            {
+                "status": "ok",
+                "action": "zone_added",
+                "zone": name,
+                "points_count": len(points),
+                "event": event,
+                "camera_index": args.camera_index,
+                "fps": args.fps,
+            },
+            f"区域已添加: {name} ({len(points)} 顶点, 事件={event})\n  camera_index={args.camera_index}, fps={args.fps}"
+        )
         return 0
 
     # 查看当前配置
     if not config:
-        print(f"实验 {exp_id} 无摄像头配置")
+        output(
+            {"status": "empty", "experiment_id": exp_id, "message": "无摄像头配置"},
+            f"实验 {exp_id} 无摄像头配置"
+        )
         return 0
 
-    print(f"摄像头配置 ({exp_id}):")
-    print(f"  camera_index: {config.get('camera_index', 0)}")
-    print(f"  fps: {config.get('fps', 15)}")
     zones = config.get("zones", [])
-    print(f"  区域 ({len(zones)} 个):")
-    for z in zones:
-        pts = z.get("points", [])
-        print(f"    [{z.get('color','?')}] {z.get('name','?')}: {len(pts)} 顶点, 事件={z.get('event','?')}")
+    output(
+        {
+            "status": "ok",
+            "experiment_id": exp_id,
+            "camera_index": config.get("camera_index", 0),
+            "fps": config.get("fps", 15),
+            "zones": [
+                {
+                    "name": z.get("name", "?"),
+                    "points_count": len(z.get("points", [])),
+                    "event": z.get("event", "?"),
+                    "color": z.get("color", "?"),
+                }
+                for z in zones
+            ],
+        },
+        f"摄像头配置 ({exp_id}):\n"
+        f"  camera_index: {config.get('camera_index', 0)}\n"
+        f"  fps: {config.get('fps', 15)}\n"
+        f"  区域 ({len(zones)} 个):\n"
+        + "\n".join(
+            f"    [{z.get('color','?')}] {z.get('name','?')}: {len(z.get('points', []))} 顶点, 事件={z.get('event','?')}"
+            for z in zones
+        )
+    )
     return 0
 
 
@@ -571,11 +651,11 @@ def cmd_camera_detect(args: argparse.Namespace) -> int:
     try:
         from ui.camera import CameraSource, HAS_CV2
     except ImportError:
-        print("缺少 opencv-python，请安装: pip install opencv-python")
+        output({"error": "缺少 opencv-python，请安装: pip install opencv-python", "code": 2})
         return 2
 
     if not HAS_CV2:
-        print("opencv-python 未安装")
+        output({"error": "opencv-python 未安装", "code": 2})
         return 2
 
     exp_id = args.exp_id
@@ -588,12 +668,27 @@ def cmd_camera_detect(args: argparse.Namespace) -> int:
     camera_index = config.get("camera_index", args.index)
     fps = config.get("fps", 15)
 
-    print(f"摄像头检测启动: camera_index={camera_index}, {duration_s}s")
-    print(f"  fps={fps}, 区域数={len(zones)}")
-    if zones:
-        for z in zones:
-            print(f"    区域: {z.get('name','?')} ({len(z.get('points',[]))} 顶点) → {z.get('event','?')}")
-    print()
+    output(
+        {
+            "status": "starting",
+            "experiment_id": exp_id,
+            "camera_index": camera_index,
+            "duration_s": duration_s,
+            "fps": fps,
+            "zones_count": len(zones),
+            "zones": [
+                {"name": z.get("name", "?"), "points_count": len(z.get("points", [])), "event": z.get("event", "?")}
+                for z in zones
+            ],
+        },
+        f"摄像头检测启动: camera_index={camera_index}, {duration_s}s\n"
+        f"  fps={fps}, 区域数={len(zones)}\n"
+        + "\n".join(
+            f"    区域: {z.get('name','?')} ({len(z.get('points',[]))} 顶点) → {z.get('event','?')}"
+            for z in zones
+        )
+        + "\n"
+    )
 
     db, event_store = _init_db()
 
@@ -698,10 +793,22 @@ def cmd_camera_detect(args: argparse.Namespace) -> int:
     raw_events = event_store.get_events(session.id)
     zone_events = [e for e in raw_events if e.get("event_type", "").startswith("zone_")]
     motion_events = [e for e in raw_events if "motion" in e.get("event_type", "")]
-    print(f"\n  入库事件: {len(raw_events)}")
-    print(f"    运动: {len(motion_events)}")
-    print(f"    区域: {len(zone_events)}")
-    print(f"  Session: {session.id}")
+
+    output(
+        {
+            "status": "completed",
+            "experiment_id": exp_id,
+            "session_id": session.id,
+            "total_events": len(raw_events),
+            "motion_events": len(motion_events),
+            "zone_events": len(zone_events),
+            "duration_s": duration_s,
+        },
+        f"\n  入库事件: {len(raw_events)}\n"
+        f"    运动: {len(motion_events)}\n"
+        f"    区域: {len(zone_events)}\n"
+        f"  Session: {session.id}"
+    )
 
     db.close()
     return 0
@@ -717,7 +824,10 @@ def cmd_camera_events(args: argparse.Namespace) -> int:
     # 查找该实验的所有 session
     sessions = event_store.get_sessions_by_experiment(exp_id)
     if not sessions:
-        print(f"实验 {exp_id} 无关联 session")
+        output(
+            {"status": "empty", "experiment_id": exp_id, "message": "无关联 session", "events": []},
+            f"实验 {exp_id} 无关联 session"
+        )
         db.close()
         return 0
 
@@ -740,23 +850,49 @@ def cmd_camera_events(args: argparse.Namespace) -> int:
     unique = unique[:limit]
 
     if not unique:
-        print("无摄像头/区域事件")
+        output(
+            {"status": "empty", "experiment_id": exp_id, "message": "无摄像头/区域事件", "events": []},
+            "无摄像头/区域事件"
+        )
         db.close()
         return 0
 
-    print(f"最近 {len(unique)} 条摄像头/区域事件:")
-    print(f"  {'时间':<22} {'类型':<18} {'信号源':<30} {'值':<6}")
+    # 格式化事件列表
+    events_list = []
     for e in unique:
         ts = e.get("ts_ms", 0)
-        if ts > 1e12:  # 毫秒
-            t_str = time.strftime("%m-%d %H:%M:%S", time.localtime(ts / 1000))
-        else:
-            t_str = str(ts)
-        etype = e.get("event_type", "")[:18]
-        sig = e.get("signal_id", "")[:30]
-        val = e.get("raw_payload", {})
-        val_str = val.get("value", "") if isinstance(val, dict) else ""
-        print(f"  {t_str:<22} {etype:<18} {sig:<30} {str(val_str):<6}")
+        ts_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts / 1000)) if ts > 1e12 else str(ts)
+        payload = e.get("raw_payload", {})
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except (json.JSONDecodeError, TypeError):
+                payload = {"raw": payload}
+        val_str = payload.get("value", "") if isinstance(payload, dict) else str(payload)
+        events_list.append({
+            "timestamp": ts_str,
+            "ts_ms": ts,
+            "event_type": e.get("event_type", ""),
+            "signal_id": e.get("signal_id", ""),
+            "session_id": e.get("_session_id", ""),
+            "payload": payload,
+            "value": val_str,
+        })
+
+    output(
+        {
+            "status": "ok",
+            "experiment_id": exp_id,
+            "count": len(events_list),
+            "events": events_list,
+        },
+        f"最近 {len(events_list)} 条摄像头/区域事件:\n"
+        f"  {'时间':<22} {'类型':<18} {'信号源':<30} {'值':<6}\n"
+        + "\n".join(
+            f"  {e['timestamp']:<22} {e['event_type'][:18]:<18} {e['signal_id'][:30]:<30} {str(e['value']):<6}"
+            for e in events_list
+        )
+    )
 
     db.close()
     return 0
@@ -769,8 +905,14 @@ def cmd_export(args: argparse.Namespace) -> int:
 
     session_info = event_store.get_session(session_id)
     if not session_info:
-        print(f"会话不存在: {session_id}")
-        print("可用会话列表: python cli_app.py list")
+        output(
+            {
+                "error": f"会话不存在: {session_id}",
+                "hint": "可用会话列表: python cli_app.py list",
+                "code": 1,
+            },
+            f"会话不存在: {session_id}\n可用会话列表: python cli_app.py list"
+        )
         db.close()
         return 1
 
@@ -783,8 +925,15 @@ def cmd_export(args: argparse.Namespace) -> int:
 
     csv_path = export_session_csv(structured, full_id,
                                    os.path.join(PROJECT_ROOT, "data_store"))
-    print(f"已导出 {len(structured)} 条事件到:")
-    print(f"  {csv_path}")
+    output(
+        {
+            "status": "ok",
+            "session_id": full_id,
+            "event_count": len(structured),
+            "csv_path": csv_path,
+        },
+        f"已导出 {len(structured)} 条事件到:\n  {csv_path}"
+    )
     db.close()
     return 0
 
@@ -794,20 +943,38 @@ def cmd_list(args: argparse.Namespace) -> int:
     db, event_store = _init_db()
     sessions = event_store.get_sessions(limit=50)
     if not sessions:
-        print("暂无历史会话记录")
+        output(
+            {"status": "empty", "sessions": [], "message": "暂无历史会话记录"},
+            "暂无历史会话记录"
+        )
         db.close()
         return 0
 
-    print(f"{'Session ID':<24} {'名称':<24} {'状态':<12} {'事件数':<8} {'时间'}")
-    print("-" * 80)
+    session_list = []
     for s in sessions:
-        sid = s.get("id", "")[:24]
-        name = s.get("name", "")[:20]
-        state = s.get("state", "")
-        count = event_store.get_events(s.get("id", ""))
-        created = time.strftime("%m-%d %H:%M",
-                                 time.localtime(s.get("created_at", 0)))
-        print(f"{sid:<24} {name:<24} {state:<12} {len(count):<8} {created}")
+        events = event_store.get_events(s.get("id", ""))
+        created = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(s.get("created_at", 0)))
+        session_list.append({
+            "id": s.get("id", ""),
+            "name": s.get("name", ""),
+            "state": s.get("state", ""),
+            "event_count": len(events),
+            "created_at": created,
+        })
+
+    output(
+        {
+            "status": "ok",
+            "count": len(session_list),
+            "sessions": session_list,
+        },
+        f"{'Session ID':<24} {'名称':<24} {'状态':<12} {'事件数':<8} {'时间'}\n"
+        f"{'-'*80}\n"
+        + "\n".join(
+            f"{s['id'][:24]:<24} {s['name'][:20]:<24} {s['state']:<12} {s['event_count']:<8} {s['created_at']}"
+            for s in session_list
+        )
+    )
     db.close()
     return 0
 
@@ -868,13 +1035,25 @@ def cmd_create(args: argparse.Namespace) -> int:
             save_path=args.save_path or "",
         )
     except ValueError as e:
-        print(f"[错误] {e}")
+        output({"error": str(e), "code": 1})
         return 1
 
     exp = em.get_experiment(exp_id)
-    print("实验创建成功:")
-    print(_format_exp(exp))
-    print(f"  EXP ID:   {exp_id}")
+    output(
+        {
+            "status": "ok",
+            "experiment_id": exp_id,
+            "name": exp.get("name", ""),
+            "subject_id": exp.get("subject_id", ""),
+            "species": exp.get("species", ""),
+            "trigger_camera": exp.get("trigger_camera", False),
+            "trigger_hardware": exp.get("trigger_hardware", False),
+            "max_duration_min": exp.get("max_duration_min", 0),
+            "max_trigger_count": exp.get("max_trigger_count", 0),
+            "folder": exp.get("_folder", ""),
+        },
+        f"实验创建成功:\n{_format_exp(exp)}\n  EXP ID:   {exp_id}"
+    )
     return 0
 
 
@@ -884,12 +1063,15 @@ def cmd_experiments(args: argparse.Namespace) -> int:
     db, event_store = _init_db()
     exps = em.list_experiments()
     if not exps:
-        print("暂无实验记录")
+        output(
+            {"status": "empty", "experiments": [], "message": "暂无实验记录"},
+            "暂无实验记录"
+        )
         db.close()
         return 0
 
     show_detail = args.detail
-    as_json = args.json
+    as_json = args.json or _JSON_OUTPUT
 
     results = []
     for exp in exps:
@@ -900,6 +1082,7 @@ def cmd_experiments(args: argparse.Namespace) -> int:
         for s in sessions:
             total_events += len(event_store.get_events(s.get("id", "")))
 
+        created = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(exp.get("created_at", 0) / 1000))
         entry = {
             "id": eid,
             "name": exp.get("name", "?"),
@@ -907,28 +1090,48 @@ def cmd_experiments(args: argparse.Namespace) -> int:
             "species": exp.get("species", ""),
             "session_count": session_count,
             "total_events": total_events,
-            "created_at": exp.get("created_at", 0),
+            "created_at": created,
         }
         results.append(entry)
 
     if as_json:
-        print(json.dumps(results, ensure_ascii=False, indent=2))
+        output(
+            {
+                "status": "ok",
+                "count": len(results),
+                "experiments": results,
+            }
+        )
         db.close()
         return 0
 
     if show_detail:
+        lines = []
         for i, r in enumerate(results):
-            created = time.strftime("%m-%d %H:%M",
-                                     time.localtime(r["created_at"] / 1000))
-            print(f"[{i+1}] {r['name']:<20} {r['subject']:<8} {r['species']:<8}"
-                  f"  session: {r['session_count']:<3}  事件: {r['total_events']:<5}  {created}")
+            lines.append(
+                f"[{i+1}] {r['name']:<20} {r['subject']:<8} {r['species']:<8}"
+                f"  session: {r['session_count']:<3}  事件: {r['total_events']:<5}  {r['created_at']}"
+            )
+        output(
+            {
+                "status": "ok",
+                "count": len(results),
+                "experiments": results,
+            },
+            "\n".join(lines)
+        )
     else:
-        print(f"{'#':<4} {'实验名称':<24} {'动物':<10} {'物种':<10} {'创建时间'}")
-        print("-" * 70)
+        lines = [f"{'#':<4} {'实验名称':<24} {'动物':<10} {'物种':<10} {'创建时间'}", "-" * 70]
         for i, r in enumerate(results):
-            created = time.strftime("%m-%d %H:%M",
-                                     time.localtime(r["created_at"] / 1000))
-            print(f"{i+1:<4} {r['name']:<24} {r['subject']:<10} {r['species']:<10} {created}")
+            lines.append(f"{i+1:<4} {r['name']:<24} {r['subject']:<10} {r['species']:<10} {r['created_at']}")
+        output(
+            {
+                "status": "ok",
+                "count": len(results),
+                "experiments": results,
+            },
+            "\n".join(lines)
+        )
 
     db.close()
     return 0
@@ -939,48 +1142,72 @@ def cmd_detail(args: argparse.Namespace) -> int:
     em = _init_exp_mgr()
     exp = em.get_experiment(args.exp_id)
     if not exp:
-        print(f"[错误] 实验不存在: {args.exp_id}")
+        output({"error": f"实验不存在: {args.exp_id}", "code": 1})
         return 1
 
-    print(_format_exp(exp))
     notes = exp.get("notes", "") or exp.get("subject_notes", "")
-    if notes:
-        print(f"  备注:     {notes[:200]}")
-
     em_status = em.get_camera_config_status(args.exp_id)
-    print(f"  摄像头配置: {em_status}")
+
+    result_data = {
+        "status": "ok",
+        "experiment_id": args.exp_id,
+        "name": exp.get("name", ""),
+        "subject_id": exp.get("subject_id", ""),
+        "species": exp.get("species", ""),
+        "notes": notes[:200] if notes else "",
+        "camera_config_status": em_status,
+        "max_duration_min": exp.get("max_duration_min", 0),
+        "max_trigger_count": exp.get("max_trigger_count", 0),
+        "trigger_camera": exp.get("trigger_camera", False),
+        "trigger_hardware": exp.get("trigger_hardware", False),
+        "folder": exp.get("_folder", ""),
+    }
 
     flow = em.load_flow(args.exp_id)
     if flow:
-        print(f"  关联流程: {flow.get('name', '?')} ({len(flow.get('nodes', []))} 节点)")
+        result_data["flow"] = {
+            "name": flow.get("name", "?"),
+            "node_count": len(flow.get("nodes", [])),
+        }
 
-    if args.sessions or args.json:
+    as_json = args.json or _JSON_OUTPUT
+
+    if args.sessions or as_json:
         db, event_store = _init_db()
         sessions = event_store.get_sessions_by_experiment(args.exp_id)
+        session_list = []
+        for s in sessions:
+            count = len(event_store.get_events(s.get("id", "")))
+            created = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(s.get("created_at", 0)))
+            session_list.append({
+                "id": s.get("id", ""),
+                "event_count": count,
+                "state": s.get("state", ""),
+                "created_at": created,
+            })
+        result_data["sessions"] = session_list
+        result_data["session_count"] = len(session_list)
+        db.close()
+
+    # 构建人类可读输出
+    human_lines = [_format_exp(exp)]
+    if notes:
+        human_lines.append(f"  备注:     {notes[:200]}")
+    human_lines.append(f"  摄像头配置: {em_status}")
+    if flow:
+        human_lines.append(f"  关联流程: {flow.get('name', '?')} ({len(flow.get('nodes', []))} 节点)")
+
+    if "sessions" in result_data:
+        sessions = result_data["sessions"]
         if sessions:
-            print(f"\n  --- 关联 Session ({len(sessions)} 个) ---")
-            print(f"  {'Session ID':<24} {'事件数':<8} {'状态':<12} {'时间'}")
+            human_lines.append(f"\n  --- 关联 Session ({len(sessions)} 个) ---")
+            human_lines.append(f"  {'Session ID':<24} {'事件数':<8} {'状态':<12} {'时间'}")
             for s in sessions:
-                sid = s.get("id", "")[:20]
-                count = len(event_store.get_events(s.get("id", "")))
-                state = s.get("state", "")
-                created = time.strftime("%m-%d %H:%M",
-                                         time.localtime(s.get("created_at", 0)))
-                print(f"  {sid:<24} {count:<8} {state:<12} {created}")
+                human_lines.append(f"  {s['id'][:20]:<24} {s['event_count']:<8} {s['state']:<12} {s['created_at']}")
         else:
-            print("\n  无关联 Session")
-        db.close()
+            human_lines.append("\n  无关联 Session")
 
-    if args.json:
-        db, event_store = _init_db()
-        info = dict(exp)
-        info["sessions"] = [
-            {**s, "event_count": len(event_store.get_events(s.get("id", "")))}
-            for s in event_store.get_sessions_by_experiment(args.exp_id)
-        ]
-        print(json.dumps(info, ensure_ascii=False, indent=2, default=str))
-        db.close()
-
+    output(result_data, "\n".join(human_lines))
     return 0
 
 
@@ -993,25 +1220,43 @@ def cmd_delete(args: argparse.Namespace) -> int:
         exps = em.list_experiments()
         exp_ids = [e["id"] for e in exps]
         if not exp_ids:
-            print("没有可删除的实验")
+            output(
+                {"status": "empty", "message": "没有可删除的实验"},
+                "没有可删除的实验"
+            )
             return 0
         names = [e["name"] for e in exps]
         if not args.force:
-            print(f"将删除 {len(exps)} 个实验:")
-            for n in names:
-                print(f"  - {n}")
+            output(
+                {
+                    "status": "confirm",
+                    "count": len(exps),
+                    "experiments": names,
+                    "message": f"将删除 {len(exps)} 个实验",
+                },
+                f"将删除 {len(exps)} 个实验:\n" + "\n".join(f"  - {n}" for n in names)
+            )
             confirm = input("确认删除? (y/N): ")
             if confirm.lower() != "y":
-                print("已取消")
+                output({"status": "cancelled", "message": "已取消"}, "已取消")
                 return 0
 
     if not exp_ids:
-        print("[错误] 请指定要删除的实验 ID")
+        output({"error": "请指定要删除的实验 ID", "code": 1})
         return 1
 
     deleted = em.batch_delete_experiments(exp_ids)
-    print(f"已删除 {deleted}/{len(exp_ids)} 个实验")
-    return 0 if deleted == len(exp_ids) else 1
+    success = deleted == len(exp_ids)
+    output(
+        {
+            "status": "ok" if success else "partial",
+            "deleted": deleted,
+            "total": len(exp_ids),
+            "success": success,
+        },
+        f"已删除 {deleted}/{len(exp_ids)} 个实验"
+    )
+    return 0 if success else 1
 
 
 def cmd_clone(args: argparse.Namespace) -> int:
@@ -1020,19 +1265,25 @@ def cmd_clone(args: argparse.Namespace) -> int:
     try:
         new_id = em.clone_experiment(args.exp_id, args.name)
     except ValueError as e:
-        print(f"[错误] {e}")
+        output({"error": str(e), "code": 1})
         return 1
     except Exception as e:
-        print(f"[错误] 克隆失败: {e}")
+        output({"error": f"克隆失败: {e}", "code": 1})
         return 1
 
     if new_id:
-        print(f"克隆成功: {new_id}")
         exp = em.get_experiment(new_id)
-        if exp:
-            print(_format_exp(exp))
+        output(
+            {
+                "status": "ok",
+                "new_experiment_id": new_id,
+                "source_experiment_id": args.exp_id,
+                "name": exp.get("name", "") if exp else "",
+            },
+            f"克隆成功: {new_id}\n{_format_exp(exp)}" if exp else f"克隆成功: {new_id}"
+        )
         return 0
-    print(f"[错误] 实验不存在: {args.exp_id}")
+    output({"error": f"实验不存在: {args.exp_id}", "code": 1})
     return 1
 
 
@@ -1041,12 +1292,21 @@ def cmd_start(args: argparse.Namespace) -> int:
     em = _init_exp_mgr()
     exp = em.get_experiment(args.exp_id)
     if not exp:
-        print(f"[错误] 实验不存在: {args.exp_id}")
+        output({"error": f"实验不存在: {args.exp_id}", "code": 1})
         return 1
 
-    print(f"启动实验: {exp.get('name', '?')}")
-    print(f"  事件数: {args.count}")
-    print(f"  端口:   {args.port}")
+    output(
+        {
+            "status": "starting",
+            "experiment_id": args.exp_id,
+            "name": exp.get("name", "?"),
+            "count": args.count,
+            "port": args.port,
+        },
+        f"启动实验: {exp.get('name', '?')}\n"
+        f"  事件数: {args.count}\n"
+        f"  端口:   {args.port}"
+    )
 
     result = _api_post("/api/experiment/start-mock", {
         "count": args.count,
@@ -1057,8 +1317,15 @@ def cmd_start(args: argparse.Namespace) -> int:
     }, port=args.port)
 
     if result is None:
+        output({"error": "启动实验失败", "code": 1})
         return 1
-    print(f"  结果: {json.dumps(result, ensure_ascii=False)}")
+    output(
+        {
+            "status": "ok",
+            "result": result,
+        },
+        f"  结果: {json.dumps(result, ensure_ascii=False)}"
+    )
     return 0
 
 
@@ -1066,8 +1333,15 @@ def cmd_stop(args: argparse.Namespace) -> int:
     """停止实验（调 server API）"""
     result = _api_post("/api/experiment/stop", port=args.port)
     if result is None:
+        output({"error": "停止实验失败", "code": 1})
         return 1
-    print(f"已停止: {json.dumps(result, ensure_ascii=False)}")
+    output(
+        {
+            "status": "ok",
+            "result": result,
+        },
+        f"已停止: {json.dumps(result, ensure_ascii=False)}"
+    )
     return 0
 
 
@@ -1087,18 +1361,29 @@ def cmd_status(args: argparse.Namespace) -> int:
         result = _api_get("/api/status", port=port)
         if result is None:
             if not watch:
+                output({"error": f"无法连接到端口 {port} 的服务", "code": 1})
                 return 1
             continue
 
-        print(f"{'='*50}")
-        print(f"  行为学训练盒 — 状态 (端口 {port})")
-        print(f"{'='*50}")
-        print(f"  版本:   {result.get('version', '?')}")
-        print(f"  引擎:   {result.get('engine', '?')}")
-        print(f"  Session: {result.get('session', '?')}")
-        print(f"  WS 客户端: {result.get('ws_clients', 0)}")
-        print()
-        print(f"  刷新: 第 {round_num} 次" if watch else "")
+        output(
+            {
+                "status": "ok",
+                "port": port,
+                "version": result.get("version", "?"),
+                "engine": result.get("engine", "?"),
+                "session": result.get("session", "?"),
+                "ws_clients": result.get("ws_clients", 0),
+                "round": round_num if watch else None,
+            },
+            f"{'='*50}\n"
+            f"  行为学训练盒 — 状态 (端口 {port})\n"
+            f"{'='*50}\n"
+            f"  版本:   {result.get('version', '?')}\n"
+            f"  引擎:   {result.get('engine', '?')}\n"
+            f"  Session: {result.get('session', '?')}\n"
+            f"  WS 客户端: {result.get('ws_clients', 0)}\n"
+            + (f"\n  刷新: 第 {round_num} 次" if watch else "")
+        )
 
         if not watch:
             break
@@ -1116,10 +1401,25 @@ def cmd_trigger(args: argparse.Namespace) -> int:
     }
     result = _api_post("/api/experiment/camera-event", payload, port=args.port)
     if result is None:
-        print("[提示] 手动触发通过 WebSocket 在 web 端效果更好")
-        print("   CLI 触发仅发送 HTTP 事件到 server，需实验运行中才生效")
+        output(
+            {
+                "status": "error",
+                "message": "手动触发通过 WebSocket 在 web 端效果更好",
+                "detail": "CLI 触发仅发送 HTTP 事件到 server，需实验运行中才生效",
+                "code": 1,
+            },
+            "[提示] 手动触发通过 WebSocket 在 web 端效果更好\n"
+            "   CLI 触发仅发送 HTTP 事件到 server，需实验运行中才生效"
+        )
         return 1
-    print(f"触发结果: {json.dumps(result, ensure_ascii=False)}")
+    output(
+        {
+            "status": "ok",
+            "result": result,
+            "payload": payload,
+        },
+        f"触发结果: {json.dumps(result, ensure_ascii=False)}"
+    )
     return 0
 
 
@@ -1128,6 +1428,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="behavior_box_cli",
         description="行为学训练盒 CLI 工具 — 用于验证和联调",
     )
+    p.add_argument("--json", action="store_true", help="JSON 格式输出（便于脚本和 AI Agent 使用）")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sp = sub.add_parser("mock", help="Mock 模式跑完整链路（无硬件验证）")
@@ -1204,13 +1505,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("experiments", help="列出所有实验")
     sp.add_argument("--detail", action="store_true", help="显示 session 统计")
-    sp.add_argument("--json", action="store_true", help="JSON 输出")
     sp.set_defaults(func=cmd_experiments)
 
     sp = sub.add_parser("detail", help="查看实验详情")
     sp.add_argument("exp_id", help="实验 ID")
     sp.add_argument("--sessions", action="store_true", help="同时列出关联 session")
-    sp.add_argument("--json", action="store_true", help="JSON 输出")
     sp.set_defaults(func=cmd_detail)
 
     sp = sub.add_parser("delete", help="删除实验")
@@ -1252,8 +1551,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    global _JSON_OUTPUT
     parser = build_parser()
     args = parser.parse_args()
+    _JSON_OUTPUT = args.json
     return int(args.func(args))
 
 

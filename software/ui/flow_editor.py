@@ -44,9 +44,7 @@ NODE_COLORS: Dict[NodeType, str] = {
     NodeType.CONDITION: "#9C27B0",
     NodeType.EXECUTE: "#00BCD4",
     NodeType.LOOP: "#795548",
-    NodeType.VARIABLE: "#607D8B",
     NodeType.RECORD: "#3F51B5",
-    NodeType.EXCEPTION: "#E91E63",
 }
 
 NODE_LABELS: Dict[NodeType, str] = {
@@ -57,9 +55,7 @@ NODE_LABELS: Dict[NodeType, str] = {
     NodeType.CONDITION: "条件",
     NodeType.EXECUTE: "执行",
     NodeType.LOOP: "循环",
-    NodeType.VARIABLE: "变量",
     NodeType.RECORD: "记录",
-    NodeType.EXCEPTION: "异常",
 }
 
 NODE_WIDTH = 140
@@ -516,36 +512,11 @@ class NodeEditDialog(QDialog):
             params_layout.addRow("超时:", timeout)
             self._param_widgets["timeout_ms"] = timeout
 
-        elif nt == NodeType.VARIABLE:
-            var_name = QLineEdit(node.params.get("name", ""))
-            var_name.setPlaceholderText("变量名")
-            params_layout.addRow("变量名:", var_name)
-            self._param_widgets["name"] = var_name
-
-            op = QComboBox()
-            op.addItems(["set", "inc", "dec"])
-            op.setCurrentText(node.params.get("operation", "set"))
-            params_layout.addRow("操作:", op)
-            self._param_widgets["operation"] = op
-
-            val = QSpinBox()
-            val.setRange(-99999, 99999)
-            val.setValue(node.params.get("value", 0))
-            params_layout.addRow("值:", val)
-            self._param_widgets["value"] = val
-
         elif nt == NodeType.RECORD:
             event_name = QLineEdit(node.params.get("event_name", node.label))
             event_name.setPlaceholderText("事件名")
             params_layout.addRow("事件名:", event_name)
             self._param_widgets["event_name"] = event_name
-
-        elif nt == NodeType.EXCEPTION:
-            policy = QComboBox()
-            policy.addItems(["retry", "skip", "terminate"])
-            policy.setCurrentText(node.params.get("on_failure", "terminate"))
-            params_layout.addRow("失败策略:", policy)
-            self._param_widgets["on_failure"] = policy
 
         if params_layout.rowCount() > 0:
             layout.addWidget(params_group)

@@ -122,6 +122,25 @@ def create_experiment(
     with open(os.path.join(folder, "experiment.json"), "w", encoding="utf-8") as f:
         json.dump(config, f, ensure_ascii=False, indent=2)
 
+    # G3-FIN-6: 创建默认 flow.json（含 START/END 节点），确保流程编辑器打开时不为空
+    default_flow = {
+        "id": f"flow_{exp_id}",
+        "name": name or "未命名实验",
+        "nodes": {
+            "start_0": {
+                "id": "start_0", "node_type": "start", "label": "开始",
+                "params": {}, "x": 20, "y": 20,
+            },
+            "end_0": {
+                "id": "end_0", "node_type": "end", "label": "结束",
+                "params": {}, "x": 300, "y": 20,
+            },
+        },
+        "edges": [],
+    }
+    with open(os.path.join(folder, "flow.json"), "w", encoding="utf-8") as f:
+        json.dump(default_flow, f, ensure_ascii=False, indent=2)
+
     # Index custom paths so list/get can find them
     if save_path:
         idx = _read_index()

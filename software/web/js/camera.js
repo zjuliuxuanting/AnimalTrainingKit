@@ -12,7 +12,7 @@ let bgFrames = [];
 let bgFillPoints = [];
 let bgFillMode = false;
 let bgFillCloseBtn = null;
-let currentExperimentId = null;
+// currentExperimentId declared in flow-editor.js (G3-FIN-1)
 let currentExperimentName = '';
 let cameraExperimentEnabled = false;
 let eventRules = [];
@@ -1192,6 +1192,10 @@ function setCameraExperiment(expId, expName, cameraEnabled) {
   currentExperimentName = expName || '';
   cameraExperimentEnabled = !!cameraEnabled;
   updateCameraTabAccess();
+  // 同步更新流程编辑器的访问状态
+  if (typeof updateFlowEditorAccess === 'function') {
+    updateFlowEditorAccess();
+  }
 
   // Full reset: clear all in-memory state before loading new experiment's config
   if (detectInterval) { clearInterval(detectInterval); detectInterval = null; _detectionPaused = false; }
@@ -1300,6 +1304,24 @@ function updateCameraTabAccess() {
     }
   }
 
+  // 灰色覆盖层：无实验或无摄像头时遮挡全部内容
+  const overlay = document.getElementById('cameraOverlay');
+  const overlayText = document.getElementById('cameraOverlayText');
+  if (overlay) {
+    if (!cameraOk) {
+      overlay.style.display = 'flex';
+      if (overlayText) {
+        if (!hasExp) {
+          overlayText.textContent = '请先在实验管理中「编辑」或「启动」一个实验';
+        } else if (!cameraExperimentEnabled) {
+          overlayText.textContent = '当前实验未启用摄像头，请创建含摄像头的实验';
+        }
+      }
+    } else {
+      overlay.style.display = 'none';
+    }
+  }
+
   document.getElementById('camNext').disabled = !cameraOk;
   document.getElementById('camPrev').disabled = !cameraOk || cameraStep === 0;
   document.getElementById('camSelect').disabled = !cameraOk;
@@ -1359,6 +1381,10 @@ function clearExperimentContext() {
   updateZoneList();
   drawRulerCanvas();
   updateCameraTabAccess();
+  // 同步更新流程编辑器的访问状态
+  if (typeof updateFlowEditorAccess === 'function') {
+    updateFlowEditorAccess();
+  }
 }
 
 // --- Blob / connected-component extraction ---
