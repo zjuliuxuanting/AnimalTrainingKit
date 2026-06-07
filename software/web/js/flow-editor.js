@@ -90,7 +90,7 @@ function buildDynamicSelectOptions(fieldKey, selected) {
       <option value="actuator:light" ${selected === 'actuator:light' ? 'selected' : ''}>灯光</option>
       <option value="actuator:buzzer" ${selected === 'actuator:buzzer' ? 'selected' : ''}>蜂鸣器</option>`;
   }
-  if (_cachedSources) {
+  if (_cachedSources && _cachedSources.length > 0) {
     return _cachedSources.map(s => {
       const sel = s.id === selected ? 'selected' : '';
       return `<option value="${s.id}" ${sel}>${s.label}</option>`;
@@ -614,7 +614,11 @@ async function loadSignalSources() {
   if (_sourcesLoading) return;
   _sourcesLoading = true;
   try {
-    const resp = await fetch('/api/sources');
+    let url = '/api/sources';
+    if (typeof currentExperimentId !== 'undefined' && currentExperimentId) {
+      url += '?experiment_id=' + encodeURIComponent(currentExperimentId);
+    }
+    const resp = await fetch(url);
     const data = await resp.json();
     _cachedSources = data.sources || [];
   } catch (e) {

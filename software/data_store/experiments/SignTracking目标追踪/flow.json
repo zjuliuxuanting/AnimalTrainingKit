@@ -1,0 +1,166 @@
+{
+  "name": "SignTracking目标追踪",
+  "nodes": {
+    "start": {
+      "id": "start",
+      "node_type": "start",
+      "label": "START",
+      "x": 50,
+      "y": 200,
+      "params": {}
+    },
+    "delay_iti": {
+      "id": "delay_iti",
+      "node_type": "delay",
+      "label": "ITI 1s",
+      "x": 200,
+      "y": 200,
+      "params": {
+        "duration_s": 1
+      }
+    },
+    "exec_cs": {
+      "id": "exec_cs",
+      "node_type": "execute",
+      "label": "插入杠杆+亮灯",
+      "x": 380,
+      "y": 200,
+      "params": {
+        "actuator_id": "lever_light",
+        "action": "high"
+      }
+    },
+    "delay_cs": {
+      "id": "delay_cs",
+      "node_type": "delay",
+      "label": "CS呈现 1s",
+      "x": 560,
+      "y": 200,
+      "params": {
+        "duration_s": 1
+      }
+    },
+    "exec_food": {
+      "id": "exec_food",
+      "node_type": "execute",
+      "label": "给食(US)",
+      "x": 740,
+      "y": 200,
+      "params": {
+        "actuator_id": "feeder",
+        "action": "high"
+      }
+    },
+    "record_trial": {
+      "id": "record_trial",
+      "node_type": "record",
+      "label": "试次结束",
+      "x": 920,
+      "y": 200,
+      "params": {
+        "event_name": "trial_end",
+        "counter_name": "trial_count",
+        "counter_op": "+1"
+      }
+    },
+    "loop_1": {
+      "id": "loop_1",
+      "node_type": "loop",
+      "label": "循环",
+      "x": 1100,
+      "y": 200,
+      "params": {
+        "max_iterations": 3,
+        "timeout_s": 600
+      }
+    },
+    "end": {
+      "id": "end",
+      "node_type": "end",
+      "label": "END",
+      "x": 1250,
+      "y": 300,
+      "params": {}
+    },
+    "sniffer_lever": {
+      "id": "sniffer_lever",
+      "node_type": "sniffer",
+      "label": "杠杆接近探针",
+      "x": 560,
+      "y": 50,
+      "params": {
+        "signal_id": "mock:default",
+        "event_name": "lever_approach"
+      }
+    },
+    "sniffer_feeder": {
+      "id": "sniffer_feeder",
+      "node_type": "sniffer",
+      "label": "食槽接近探针",
+      "x": 740,
+      "y": 50,
+      "params": {
+        "signal_id": "mock:default",
+        "event_name": "feeder_approach"
+      }
+    }
+  },
+  "edges": [
+    {
+      "id": "e1",
+      "source_node": "start",
+      "source_port": "out",
+      "target_node": "delay_iti",
+      "target_port": "in"
+    },
+    {
+      "id": "e2",
+      "source_node": "delay_iti",
+      "source_port": "out",
+      "target_node": "exec_cs",
+      "target_port": "in"
+    },
+    {
+      "id": "e3",
+      "source_node": "exec_cs",
+      "source_port": "out",
+      "target_node": "delay_cs",
+      "target_port": "in"
+    },
+    {
+      "id": "e4",
+      "source_node": "delay_cs",
+      "source_port": "out",
+      "target_node": "exec_food",
+      "target_port": "in"
+    },
+    {
+      "id": "e5",
+      "source_node": "exec_food",
+      "source_port": "out",
+      "target_node": "record_trial",
+      "target_port": "in"
+    },
+    {
+      "id": "e6",
+      "source_node": "record_trial",
+      "source_port": "out",
+      "target_node": "loop_1",
+      "target_port": "in"
+    },
+    {
+      "id": "e7",
+      "source_node": "loop_1",
+      "source_port": "body",
+      "target_node": "delay_iti",
+      "target_port": "in"
+    },
+    {
+      "id": "e8",
+      "source_node": "loop_1",
+      "source_port": "exit",
+      "target_node": "end",
+      "target_port": "in"
+    }
+  ]
+}

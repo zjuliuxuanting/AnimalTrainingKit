@@ -1,0 +1,318 @@
+{
+  "name": "5CSRTT注意任务",
+  "nodes": {
+    "start": {
+      "id": "start",
+      "node_type": "start",
+      "label": "START",
+      "x": 50,
+      "y": 200,
+      "params": {}
+    },
+    "delay_iti": {
+      "id": "delay_iti",
+      "node_type": "delay",
+      "label": "ITI 1s",
+      "x": 200,
+      "y": 200,
+      "params": {
+        "duration_s": 1
+      }
+    },
+    "exec_light": {
+      "id": "exec_light",
+      "node_type": "execute",
+      "label": "随机亮灯",
+      "x": 350,
+      "y": 200,
+      "params": {
+        "actuator_id": "light",
+        "action": "high"
+      }
+    },
+    "fork_1": {
+      "id": "fork_1",
+      "node_type": "fork",
+      "label": "分叉",
+      "x": 500,
+      "y": 200,
+      "params": {}
+    },
+    "trig_nose": {
+      "id": "trig_nose",
+      "node_type": "trigger",
+      "label": "鼻触",
+      "x": 650,
+      "y": 80,
+      "params": {
+        "signal_id": "mock:default",
+        "trigger": "rising"
+      }
+    },
+    "cond_1": {
+      "id": "cond_1",
+      "node_type": "condition",
+      "label": "正确孔?",
+      "x": 800,
+      "y": 80,
+      "params": {
+        "source": "trigger_count",
+        "operator": "gte",
+        "value": 1
+      }
+    },
+    "delay_01s": {
+      "id": "delay_01s",
+      "node_type": "delay",
+      "label": "0.1s",
+      "x": 950,
+      "y": 20,
+      "params": {
+        "duration_s": 0.1
+      }
+    },
+    "exec_reward": {
+      "id": "exec_reward",
+      "node_type": "execute",
+      "label": "给食奖励",
+      "x": 1100,
+      "y": 20,
+      "params": {
+        "actuator_id": "feeder",
+        "action": "high"
+      }
+    },
+    "record_correct": {
+      "id": "record_correct",
+      "node_type": "record",
+      "label": "正确",
+      "x": 1250,
+      "y": 20,
+      "params": {
+        "event_name": "correct",
+        "counter_name": "correct_count",
+        "counter_op": "+1"
+      }
+    },
+    "exec_punish1": {
+      "id": "exec_punish1",
+      "node_type": "execute",
+      "label": "惩罚(错误)",
+      "x": 950,
+      "y": 140,
+      "params": {
+        "actuator_id": "punisher",
+        "action": "high"
+      }
+    },
+    "record_error": {
+      "id": "record_error",
+      "node_type": "record",
+      "label": "错误",
+      "x": 1100,
+      "y": 140,
+      "params": {
+        "event_name": "error",
+        "counter_name": "error_count",
+        "counter_op": "+1"
+      }
+    },
+    "delay_timeout": {
+      "id": "delay_timeout",
+      "node_type": "delay",
+      "label": "无反应超时 1.5s",
+      "x": 650,
+      "y": 350,
+      "params": {
+        "duration_s": 1.5
+      }
+    },
+    "exec_punish2": {
+      "id": "exec_punish2",
+      "node_type": "execute",
+      "label": "惩罚(遗漏)",
+      "x": 800,
+      "y": 350,
+      "params": {
+        "actuator_id": "punisher",
+        "action": "high"
+      }
+    },
+    "record_omit": {
+      "id": "record_omit",
+      "node_type": "record",
+      "label": "遗漏",
+      "x": 950,
+      "y": 350,
+      "params": {
+        "event_name": "omission",
+        "counter_name": "omission_count",
+        "counter_op": "+1"
+      }
+    },
+    "delay_trial_end": {
+      "id": "delay_trial_end",
+      "node_type": "delay",
+      "label": "试次结束 0.3s",
+      "x": 1400,
+      "y": 200,
+      "params": {
+        "duration_s": 0.3
+      }
+    },
+    "loop_1": {
+      "id": "loop_1",
+      "node_type": "loop",
+      "label": "循环",
+      "x": 1550,
+      "y": 200,
+      "params": {
+        "max_iterations": 5,
+        "timeout_s": 300
+      }
+    },
+    "end": {
+      "id": "end",
+      "node_type": "end",
+      "label": "END",
+      "x": 1700,
+      "y": 300,
+      "params": {}
+    }
+  },
+  "edges": [
+    {
+      "id": "e1",
+      "source_node": "start",
+      "source_port": "out",
+      "target_node": "delay_iti",
+      "target_port": "in"
+    },
+    {
+      "id": "e2",
+      "source_node": "delay_iti",
+      "source_port": "out",
+      "target_node": "exec_light",
+      "target_port": "in"
+    },
+    {
+      "id": "e3",
+      "source_node": "exec_light",
+      "source_port": "out",
+      "target_node": "fork_1",
+      "target_port": "in"
+    },
+    {
+      "id": "e4",
+      "source_node": "fork_1",
+      "source_port": "continue",
+      "target_node": "trig_nose",
+      "target_port": "in"
+    },
+    {
+      "id": "e5",
+      "source_node": "trig_nose",
+      "source_port": "out",
+      "target_node": "cond_1",
+      "target_port": "in"
+    },
+    {
+      "id": "e6",
+      "source_node": "cond_1",
+      "source_port": "true",
+      "target_node": "delay_01s",
+      "target_port": "in"
+    },
+    {
+      "id": "e7",
+      "source_node": "delay_01s",
+      "source_port": "out",
+      "target_node": "exec_reward",
+      "target_port": "in"
+    },
+    {
+      "id": "e8",
+      "source_node": "exec_reward",
+      "source_port": "out",
+      "target_node": "record_correct",
+      "target_port": "in"
+    },
+    {
+      "id": "e9",
+      "source_node": "record_correct",
+      "source_port": "out",
+      "target_node": "delay_trial_end",
+      "target_port": "in"
+    },
+    {
+      "id": "e10",
+      "source_node": "cond_1",
+      "source_port": "false",
+      "target_node": "exec_punish1",
+      "target_port": "in"
+    },
+    {
+      "id": "e11",
+      "source_node": "exec_punish1",
+      "source_port": "out",
+      "target_node": "record_error",
+      "target_port": "in"
+    },
+    {
+      "id": "e12",
+      "source_node": "record_error",
+      "source_port": "out",
+      "target_node": "delay_trial_end",
+      "target_port": "in"
+    },
+    {
+      "id": "e13",
+      "source_node": "fork_1",
+      "source_port": "stop",
+      "target_node": "delay_timeout",
+      "target_port": "in"
+    },
+    {
+      "id": "e14",
+      "source_node": "delay_timeout",
+      "source_port": "out",
+      "target_node": "exec_punish2",
+      "target_port": "in"
+    },
+    {
+      "id": "e15",
+      "source_node": "exec_punish2",
+      "source_port": "out",
+      "target_node": "record_omit",
+      "target_port": "in"
+    },
+    {
+      "id": "e16",
+      "source_node": "record_omit",
+      "source_port": "out",
+      "target_node": "delay_trial_end",
+      "target_port": "in"
+    },
+    {
+      "id": "e17",
+      "source_node": "delay_trial_end",
+      "source_port": "out",
+      "target_node": "loop_1",
+      "target_port": "in"
+    },
+    {
+      "id": "e18",
+      "source_node": "loop_1",
+      "source_port": "body",
+      "target_node": "delay_iti",
+      "target_port": "in"
+    },
+    {
+      "id": "e19",
+      "source_node": "loop_1",
+      "source_port": "exit",
+      "target_node": "end",
+      "target_port": "in"
+    }
+  ]
+}

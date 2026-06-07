@@ -51,6 +51,10 @@ class EngineContext:
     signal_history: Dict[str, float] = field(default_factory=dict)
     pending_actions: int = 0
     default_exception_policy: ExceptionPolicy = ExceptionPolicy.TERMINATE
+    # F2: FORK 分支中等待信号的 TRIGGER 节点 ID 集合（并行追踪）
+    fork_waiting_triggers: set = field(default_factory=set)
+    # F6: FORK 非 TRIGGER 分支的 asyncio Task 列表（避免同步阻塞主循环）
+    fork_branch_tasks: list = field(default_factory=list)
 
     def set_variable(self, name: str, value: Any):
         self.variables[name] = value
@@ -110,6 +114,8 @@ class Engine:
 
         # LOOP body 深度计数器（支持嵌套循环）
         self._loop_body_depth: int = 0
+        # B1 fix: pending LOOP reentry id (body completed, need to re-enter LOOP)
+        self._pending_loop_continue: Optional[str] = None
 
         # SNIFFER 后台监听任务列表（G3-FIN-3）
         self._sniffer_configs: list[dict] = []
@@ -169,6 +175,13 @@ class Engine:
             self._run_task = None
         if self._ctx:
             self._ctx.session.stop()
+            # F2: 清理 FORK 并行等待集合
+            self._ctx.fork_waiting_triggers.clear()
+            # F6: 取消并清理 FORK 分支任务
+            for t in self._ctx.fork_branch_tasks:
+                if not t.done():
+                    t.cancel()
+            self._ctx.fork_branch_tasks.clear()
         # G3-FIN-3: 清理 SNIFFER 后台监听任务
         await self._cleanup_sniffers()
         self._set_state(EngineState.STOPPED)
@@ -203,6 +216,11 @@ class Engine:
                 ts_ms=signal.ts_ms,
             )
             await self.feed_event(event)
+            # F7: 立即派发到 SNIFFER（绕过 _run_loop 初始链阻塞）
+            # _run_loop 在 await _step_to_next(start_node) 时阻塞，
+            # 期间从未进入 while 循环，_handle_event 不会被调用。
+            # 在 feed_signal 直接派发确保 SNIFFER 捕获不被初始链阻塞。
+            self._dispatch_to_sniffers(event)
         else:
             await self.feed_event(EngineEvent(
                 kind="signal",
@@ -243,13 +261,67 @@ class Engine:
             self._dispatch_to_sniffers(event)
 
         current_node = self._ctx.flow.nodes.get(self._ctx.current_node_id)
-        if not current_node:
-            return
 
-        if event.is_trigger:
+        if current_node and event.is_trigger:
             await self._process_trigger(current_node, event)
-        elif event.is_error:
+            # F6: 主 TRIGGER 匹配后，取消 FORK 其他分支任务（动物已做选择）
+            self._cancel_fork_branches()
+
+        # F2 fix: 处理 FORK 并行等待中的 TRIGGER
+        if event.is_signal and self._ctx.fork_waiting_triggers:
+            event_signal_id = event.data.get("signal_id", "")
+            for waiting_id in list(self._ctx.fork_waiting_triggers):
+                waiting_node = self._ctx.flow.nodes.get(waiting_id)
+                if waiting_node and waiting_node.node_type == NodeType.TRIGGER:
+                    node_signal_id = waiting_node.params.get("signal_id", "")
+                    full_match = (
+                        event_signal_id == node_signal_id
+                        or f"{event.data.get('source_id','')}:{event_signal_id}" == node_signal_id
+                    )
+                    # F4: registry-based matching for fork waiting triggers too
+                    if not full_match:
+                        full_match = self._match_signal_via_registry(node_signal_id, event_signal_id)
+                    if full_match:
+                        self._ctx.fork_waiting_triggers.discard(waiting_id)
+                        logger.info(f"FORK 分支 TRIGGER [{waiting_node.id}] 匹配: signal={node_signal_id}")
+                        self._emit_engine_event("node_triggered", {
+                            "node_id": waiting_node.id,
+                            "signal_id": node_signal_id,
+                        })
+                        await self._step_to_next(waiting_node)
+                        # F6: FORK 分支 TRIGGER 匹配后，取消其他分支任务
+                        self._cancel_fork_branches()
+                        # 一个信号只匹配第一个等待中的 TRIGGER（选择模型：动物做一次选择）
+                        break
+
+        elif event.is_error and current_node:
             await self._handle_error(current_node, event)
+
+    def _cancel_fork_branches(self):
+        """F6: 取消所有 FORK 非 TRIGGER 分支任务（一个分支做出选择后，其他分支放弃）"""
+        if self._ctx and self._ctx.fork_branch_tasks:
+            for t in self._ctx.fork_branch_tasks:
+                if not t.done():
+                    t.cancel()
+            self._ctx.fork_branch_tasks.clear()
+
+    def _match_signal_via_registry(self, node_signal_id: str, event_signal_id: str) -> bool:
+        """F4 fix: 通过注册中心匹配信号。当 node_signal_id 是注册中心 source_id 时，
+        检查 event_signal_id 是否在其 produced_signals 中。"""
+        try:
+            from protocol.device_registry import get_registry
+            reg = get_registry()
+            reg_entry = reg.get(node_signal_id)
+            if reg_entry and reg_entry.produced_signals:
+                matched = event_signal_id in reg_entry.produced_signals
+                if matched:
+                    logger.info(f"注册中心匹配: {node_signal_id} → {event_signal_id} (produced={reg_entry.produced_signals})")
+                return matched
+            else:
+                logger.info(f"注册中心未找到源 {node_signal_id} 或其 produced_signals 为空")
+        except Exception:
+            pass
+        return False
 
     async def _process_trigger(self, node: FlowNode, event: EngineEvent):
         if node.node_type != NodeType.TRIGGER:
@@ -267,6 +339,9 @@ class Engine:
                 event_signal_id == node_signal_id
                 or f"{event.data.get('source_id','')}:{event_signal_id}" == node_signal_id
             )
+            # F4 fix: 注册中心匹配 — node_signal_id 可能是注册中心 source_id
+            if not full_match:
+                full_match = self._match_signal_via_registry(node_signal_id, event_signal_id)
             if not full_match:
                 return
 
@@ -311,6 +386,9 @@ class Engine:
         logger.info(f"触发节点 [{node.id}] 匹配: signal={node_signal_id}, trigger={trigger_type}")
         self._emit_engine_event("node_triggered", {"node_id": node.id, "signal_id": node_signal_id})
 
+        # 递增全局触发计数器，供下游 CONDITION(source=trigger_count) 读取
+        self._ctx.counters["trigger_count"] = self._ctx.counters.get("trigger_count", 0) + 1
+
         await self._step_to_next(node)
 
     async def _step_to_next(self, node: FlowNode):
@@ -318,7 +396,16 @@ class Engine:
         if not outgoing:
             if node.node_type == NodeType.END:
                 await self.stop()
-            elif self._loop_body_depth > 0:
+            elif self._loop_body_depth > 0 or self._pending_loop_continue is not None:
+                # B1 fix: body 节点无出边但有待重入的 LOOP,先重入 LOOP
+                if self._pending_loop_continue:
+                    loop_id = self._pending_loop_continue
+                    self._pending_loop_continue = None
+                    loop_node = self._ctx.flow.nodes.get(loop_id)
+                    if loop_node:
+                        logger.debug(f"LOOP body 完成,重入 LOOP [{loop_id}]")
+                        await self._execute_loop(loop_node)
+                    return
                 # 循环体内节点无出边，静默返回（由 LOOP 控制流程）
                 logger.debug(f"LOOP body 内节点 [{node.id}] 无出边，返回")
             else:
@@ -399,9 +486,8 @@ class Engine:
             counter_name = node.params.get("counter_name", "default")
             actual_value = self._ctx.counters.get(counter_name, 0)
         else:
-            # trigger_count: use the incoming TRIGGER count from variables
-            trigger_key = f"trigger_count_{node.id}"
-            actual_value = self._ctx.get_variable(trigger_key, 0)
+            # trigger_count: 全局触发计数器（所有 TRIGGER 节点匹配时递增）
+            actual_value = self._ctx.counters.get("trigger_count", 0)
 
         result = False
         if operator == "eq":
@@ -488,6 +574,9 @@ class Engine:
             if time.time() >= deadline:
                 logger.info(f"循环 [{node.id}] 超时 {timeout_s}秒，强制退出")
                 self._emit_engine_event("loop_timeout", {"node_id": node.id, "timeout_s": timeout_s})
+                # F8: 超时退出也 emit loop_exit，标记循环已退出（含原因）
+                current_iter = self._ctx.loop_iterations.get(counter_key, 0)
+                self._emit_engine_event("loop_exit", {"node_id": node.id, "iterations": current_iter, "reason": "timeout"})
                 await self._exit_loop_path(node, counter_key)
                 return
 
@@ -516,7 +605,22 @@ class Engine:
             if body_edge:
                 next_node = self._ctx.flow.nodes.get(body_edge.target.node_id)
                 if next_node:
+                    # F1 fix: 执行 body 前先重置 current_node_id 为哨兵值 None
+                    # TRIGGER 是唯一设置 current_node_id 后暂停的节点类型
+                    # 重置为 None 确保无论第几次迭代都能可靠检测到 TRIGGER 暂停
+                    # (原方案: 保存 saved_node_id → 第1次迭代后 TRIGGER 设置了它,
+                    #  第2次迭代 saved_node_id = TRIGGER.id, TRIGGER 再次设置后不变, != 失效)
+                    self._ctx.current_node_id = None
                     await self._execute_node(next_node, body_edge)
+
+                    # F1 fix: 用 is not None 替代 != saved_node_id
+                    # 只要任何节点设置了 current_node_id 就说明 body 链在某处暂停
+                    if self._ctx.current_node_id is not None:
+                        waiting_node = self._ctx.flow.nodes.get(self._ctx.current_node_id)
+                        if waiting_node and waiting_node.node_type == NodeType.TRIGGER:
+                            self._pending_loop_continue = node.id
+                            logger.debug(f"LOOP [{node.id}] body 中 TRIGGER [{waiting_node.id}] 等待信号,暂不递归")
+                            return  # 不检查 should_continue,不递归,等信号触发后由 _step_to_next 重入
 
             # body 路径执行完成后，检查是否继续循环
             should_continue = True
@@ -528,6 +632,9 @@ class Engine:
             if should_continue:
                 await self._execute_loop(node)
             else:
+                # B1 cleanup: 清除待重入标记,防止 _step_to_next 误重入已退出的 LOOP
+                if self._pending_loop_continue == node.id:
+                    self._pending_loop_continue = None
                 reason = "达到最大次数" if self._ctx.loop_iterations.get(counter_key, 0) >= max_iter else "超时"
                 logger.info(f"循环 [{node.id}] {reason}，退出")
                 self._emit_engine_event("loop_exit", {"node_id": node.id, "reason": reason})
@@ -540,11 +647,18 @@ class Engine:
         deadline_key = f"loop_deadline_{node.id}"
         self._ctx.variables.pop(deadline_key, None)
         self._ctx.loop_iterations.pop(counter_key, None)
-        for edge in self._ctx.flow.get_outgoing_edges(node.id):
-            if edge.source.port_id == "exit":
-                next_node = self._ctx.flow.nodes.get(edge.target.node_id)
-                if next_node:
-                    await self._execute_node(next_node, edge)
+        # B2 fix: 退出路径不应算作循环体内,临时清零 _loop_body_depth
+        # 防止 exit→END 时被 END 节点的 loop_body_depth 卫语句拦截 stop()
+        saved_depth = self._loop_body_depth
+        self._loop_body_depth = 0
+        try:
+            for edge in self._ctx.flow.get_outgoing_edges(node.id):
+                if edge.source.port_id == "exit":
+                    next_node = self._ctx.flow.nodes.get(edge.target.node_id)
+                    if next_node:
+                        await self._execute_node(next_node, edge)
+        finally:
+            self._loop_body_depth = saved_depth
 
     async def _execute_record(self, node: FlowNode):
         event_name = node.params.get("event_name", node.label)
@@ -680,18 +794,84 @@ class Engine:
         # 0 outputs — flow stops on this branch, no _step_to_next
 
     async def _execute_fork(self, node: FlowNode):
-        """FORK 节点：1入2出逻辑分叉。
-        
-        收到信号时无条件复制为两路输出（"继续"和"记录终止"）。
-        无配置参数，纯逻辑节点。
+        """FORK 节点：1入2出，无条件分叉。TRIGGER 子节点加入并行等待队列。
+
+        F2 fix: 原实现通过 _step_to_next 遍历所有出边，两个分支的 TRIGGER
+        会互相覆盖 current_node_id（引擎只有单线程 current_node_id）。
+        修复：TRIGGER 子节点不立即执行，而是加入并行等待集合，
+        第一个 TRIGGER 设为主追踪节点，其余加入 fork_waiting_triggers。
+
+        F6 fix: 非 TRIGGER 子节点（DELAY/EXECUTE/RECORD等）原先用 await
+        同步执行，阻塞主循环事件处理，导致 TRIGGER 分支永远匹配不到信号。
+        修复：非 TRIGGER 分支启动为 asyncio Task，让主循环继续处理事件。
         """
-        logger.info(f"FORK 节点 [{node.id}]: 信号分叉 — 同时触发「继续」和「记录终止」")
-        self._emit_engine_event("node_executed", {
-            "node_id": node.id,
-            "type": "fork",
-        })
-        # _step_to_next 已遍历所有出边，两路输出自然同时触发
-        await self._step_to_next(node)
+        logger.info(f"FORK [{node.id}]: 分叉")
+        self._emit_engine_event("node_executed", {"node_id": node.id, "type": "fork"})
+
+        outgoing = self._ctx.flow.get_outgoing_edges(node.id)
+        triggers = []
+        for edge in outgoing:
+            target = self._ctx.flow.nodes.get(edge.target.node_id)
+            if target is None:
+                continue
+            if target.node_type == NodeType.TRIGGER:
+                triggers.append(target)
+            else:
+                # F6 fix: 非 TRIGGER 分支启动为并发 task，不阻塞主循环
+                task = asyncio.create_task(self._execute_fork_branch(target, edge, node.id))
+                self._ctx.fork_branch_tasks.append(task)
+                logger.debug(f"FORK [{node.id}]: 后台分支 {target.node_type.value} [{target.id}] 启动")
+
+        if triggers:
+            # 第一个 TRIGGER 设为主追踪节点，其余加入并行等待集合
+            self._ctx.current_node_id = triggers[0].id
+            for t in triggers[1:]:
+                self._ctx.fork_waiting_triggers.add(t.id)
+                logger.debug(f"FORK [{node.id}]: TRIGGER [{t.id}] 加入并行等待集合")
+
+    async def _execute_fork_branch(self, node: FlowNode, incoming_edge: Edge, fork_node_id: str):
+        """F6: 以 asyncio task 方式执行 FORK 的非 TRIGGER 分支。
+
+        分支执行链持续直到遇到 TRIGGER（交还主循环）或到达终端节点。
+        DELAY 节点在 task 内 await asyncio.sleep，不阻塞主循环事件处理。
+
+        竞态保护：当主循环中另一分支的 TRIGGER 先匹配时，
+        _cancel_fork_branches 会取消本 task，防止并行执行同一后续节点。
+        """
+        try:
+            current = node
+            edge = incoming_edge
+            while current is not None and self._state == EngineState.RUNNING:
+                if current.node_type == NodeType.TRIGGER:
+                    # 分支遇到 TRIGGER，加入并行等待（与主循环协作）
+                    if not self._ctx.current_node_id:
+                        self._ctx.current_node_id = current.id
+                    else:
+                        self._ctx.fork_waiting_triggers.add(current.id)
+                    logger.debug(f"FORK branch [{fork_node_id}]: TRIGGER [{current.id}] 加入等待")
+                    break
+
+                # 执行当前节点（DELAY 会 asyncio.sleep，不阻塞主循环）
+                await self._execute_node(current, edge)
+
+                # 检查是否已经到达终止状态
+                if self._state != EngineState.RUNNING:
+                    break
+
+                # 获取下一步
+                outgoing = self._ctx.flow.get_outgoing_edges(current.id)
+                if not outgoing:
+                    # 遇到无出边的节点（如 RECORD_END/END），停止分支
+                    break
+                # 取第一条出边（FORK 分支内通常单线）
+                next_edge = outgoing[0]
+                current = self._ctx.flow.nodes.get(next_edge.target.node_id)
+                edge = next_edge
+
+        except asyncio.CancelledError:
+            logger.debug(f"FORK branch (from [{fork_node_id}]) cancelled - another branch won")
+        except Exception:
+            logger.exception(f"FORK branch (from [{fork_node_id}]) error")
 
     async def _start_sniffers(self):
         """G3-FIN-3: 扫描流程图中所有 SNIFFER 节点，存储配置供主循环派发"""
@@ -709,6 +889,8 @@ class Engine:
                         "event_name": event_name,
                     })
                     logger.info(f"SNIFFER [{node.id}]: 注册监听 signal_id={signal_id}")
+        if not self._sniffer_configs:
+            logger.debug("流程中无 SNIFFER 节点，跳过注册")
 
     async def _cleanup_sniffers(self):
         """G3-FIN-3: 清理所有 SNIFFER 配置"""
@@ -719,12 +901,17 @@ class Engine:
         """主循环派发事件给所有 SNIFFER 观察者（被动观察，不消费队列）"""
         if not event.is_signal or not self._sniffer_configs:
             return
+        event_signal_id = event.data.get("signal_id", "")
+        event_source_id = event.data.get("source_id", "")
+        logger.info(f"SNIFFER dispatch: event signal={event_signal_id} source={event_source_id} configs={len(self._sniffer_configs)}")
         for cfg in self._sniffer_configs:
-            event_signal_id = event.data.get("signal_id", "")
             full_match = (
                 event_signal_id == cfg["signal_id"]
-                or f"{event.data.get('source_id', '')}:{event_signal_id}" == cfg["signal_id"]
+                or f"{event_source_id}:{event_signal_id}" == cfg["signal_id"]
             )
+            # F4: registry-based matching for SNIFFER too
+            if not full_match:
+                full_match = self._match_signal_via_registry(cfg["signal_id"], event_signal_id)
             if full_match:
                 logger.info(f"SNIFFER [{cfg['node_id']}]: 捕获信号 {cfg['signal_id']} → {cfg['event_name']}")
                 self._emit_engine_event("sniffer_captured", {

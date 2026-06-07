@@ -1091,6 +1091,11 @@ async function saveCameraConfig() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ config, experiment_id: currentExperimentId }),
     });
+    // Bug #1 fix: 摄像头配置保存后刷新信号源缓存
+    if (typeof loadSignalSources === 'function') {
+      _cachedSources = null;
+      loadSignalSources();
+    }
   } catch (e) { /* best effort */ }
 }
 

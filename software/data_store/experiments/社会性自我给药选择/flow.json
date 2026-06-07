@@ -1,0 +1,237 @@
+{
+  "name": "社会性自我给药选择",
+  "nodes": {
+    "start": {
+      "id": "start",
+      "node_type": "start",
+      "label": "START",
+      "x": 50,
+      "y": 200,
+      "params": {}
+    },
+    "delay_iti": {
+      "id": "delay_iti",
+      "node_type": "delay",
+      "label": "ITI 1s",
+      "x": 200,
+      "y": 200,
+      "params": {
+        "duration_s": 1
+      }
+    },
+    "exec_light": {
+      "id": "exec_light",
+      "node_type": "execute",
+      "label": "试次开始亮灯",
+      "x": 350,
+      "y": 200,
+      "params": {
+        "actuator_id": "light",
+        "action": "high"
+      }
+    },
+    "fork_1": {
+      "id": "fork_1",
+      "node_type": "fork",
+      "label": "分叉",
+      "x": 500,
+      "y": 200,
+      "params": {}
+    },
+    "trig_social": {
+      "id": "trig_social",
+      "node_type": "trigger",
+      "label": "社交鼻触",
+      "x": 650,
+      "y": 100,
+      "params": {
+        "signal_id": "mock:default",
+        "trigger": "rising"
+      }
+    },
+    "delay_social": {
+      "id": "delay_social",
+      "node_type": "delay",
+      "label": "0.5s",
+      "x": 800,
+      "y": 100,
+      "params": {
+        "duration_s": 0.5
+      }
+    },
+    "exec_door": {
+      "id": "exec_door",
+      "node_type": "execute",
+      "label": "开门见同伴",
+      "x": 950,
+      "y": 100,
+      "params": {
+        "actuator_id": "door",
+        "action": "high"
+      }
+    },
+    "trig_food": {
+      "id": "trig_food",
+      "node_type": "trigger",
+      "label": "食物鼻触",
+      "x": 650,
+      "y": 300,
+      "params": {
+        "signal_id": "mock:default",
+        "trigger": "rising"
+      }
+    },
+    "delay_food": {
+      "id": "delay_food",
+      "node_type": "delay",
+      "label": "0.5s",
+      "x": 800,
+      "y": 300,
+      "params": {
+        "duration_s": 0.5
+      }
+    },
+    "exec_feeder": {
+      "id": "exec_feeder",
+      "node_type": "execute",
+      "label": "给食",
+      "x": 950,
+      "y": 300,
+      "params": {
+        "actuator_id": "feeder",
+        "action": "high"
+      }
+    },
+    "record_choice": {
+      "id": "record_choice",
+      "node_type": "record",
+      "label": "选择事件",
+      "x": 1100,
+      "y": 200,
+      "params": {
+        "event_name": "choice_made",
+        "counter_name": "choice_count",
+        "counter_op": "+1"
+      }
+    },
+    "loop_1": {
+      "id": "loop_1",
+      "node_type": "loop",
+      "label": "循环",
+      "x": 1250,
+      "y": 200,
+      "params": {
+        "max_iterations": 3,
+        "timeout_s": 600
+      }
+    },
+    "end": {
+      "id": "end",
+      "node_type": "end",
+      "label": "END",
+      "x": 1400,
+      "y": 300,
+      "params": {}
+    }
+  },
+  "edges": [
+    {
+      "id": "e1",
+      "source_node": "start",
+      "source_port": "out",
+      "target_node": "delay_iti",
+      "target_port": "in"
+    },
+    {
+      "id": "e2",
+      "source_node": "delay_iti",
+      "source_port": "out",
+      "target_node": "exec_light",
+      "target_port": "in"
+    },
+    {
+      "id": "e3",
+      "source_node": "exec_light",
+      "source_port": "out",
+      "target_node": "fork_1",
+      "target_port": "in"
+    },
+    {
+      "id": "e4",
+      "source_node": "fork_1",
+      "source_port": "continue",
+      "target_node": "trig_social",
+      "target_port": "in"
+    },
+    {
+      "id": "e5",
+      "source_node": "trig_social",
+      "source_port": "out",
+      "target_node": "delay_social",
+      "target_port": "in"
+    },
+    {
+      "id": "e6",
+      "source_node": "delay_social",
+      "source_port": "out",
+      "target_node": "exec_door",
+      "target_port": "in"
+    },
+    {
+      "id": "e7",
+      "source_node": "exec_door",
+      "source_port": "out",
+      "target_node": "record_choice",
+      "target_port": "in"
+    },
+    {
+      "id": "e8",
+      "source_node": "fork_1",
+      "source_port": "stop",
+      "target_node": "trig_food",
+      "target_port": "in"
+    },
+    {
+      "id": "e9",
+      "source_node": "trig_food",
+      "source_port": "out",
+      "target_node": "delay_food",
+      "target_port": "in"
+    },
+    {
+      "id": "e10",
+      "source_node": "delay_food",
+      "source_port": "out",
+      "target_node": "exec_feeder",
+      "target_port": "in"
+    },
+    {
+      "id": "e11",
+      "source_node": "exec_feeder",
+      "source_port": "out",
+      "target_node": "record_choice",
+      "target_port": "in"
+    },
+    {
+      "id": "e12",
+      "source_node": "record_choice",
+      "source_port": "out",
+      "target_node": "loop_1",
+      "target_port": "in"
+    },
+    {
+      "id": "e13",
+      "source_node": "loop_1",
+      "source_port": "body",
+      "target_node": "delay_iti",
+      "target_port": "in"
+    },
+    {
+      "id": "e14",
+      "source_node": "loop_1",
+      "source_port": "exit",
+      "target_node": "end",
+      "target_port": "in"
+    }
+  ]
+}

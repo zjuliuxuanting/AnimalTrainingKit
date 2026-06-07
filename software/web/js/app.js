@@ -25,16 +25,64 @@ function log(msg, type = 'info') {
   el.scrollTop = el.scrollHeight;
 }
 
+function setBtnStop(disabled) {
+  const btn = document.getElementById('btnStop');
+  if (btn) btn.disabled = disabled;
+}
+
 function connectWS() {
   ws = new WebSocket(WS_URL);
   ws.onopen = () => log('连接已建立', 'success');
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
     if (msg.type === 'mock_complete' || msg.type === 'flow_complete') {
-      log(`实验完成: ${msg.event_count} 条数据已记录`, 'success');
-      toast(`实验完成，${msg.event_count} 条数据已记录`, 'success');
-      document.getElementById('btnStop').disabled = true;
+      const recCount = msg.record_count;
+      if (recCount !== undefined) {
+        log(`实验完成: ${recCount} 条记录事件（共 ${msg.event_count} 条事件）`, 'success');
+        toast(`实验完成，${recCount} 条记录事件已保存`, 'success');
+      } else {
+        log(`实验完成: ${msg.event_count} 条数据已记录`, 'success');
+        toast(`实验完成，${msg.event_count} 条数据已记录`, 'success');
+      }
+      setBtnStop(true);
       renderExperimentList();
+    } else if (msg.type === 'signal') {
+      // 实时信号事件 → 事件日志
+      const sigLabel = msg.signal_id || '信号';
+      log(`📡 信号: ${sigLabel}`, 'info');
+    } else if (msg.type === 'engine_event') {
+      // 引擎执行事件（TRIGGER 触发 / RECORD 记录 / DELAY 延时等） → 事件日志
+      const d = msg.data || {};
+      const nodeType = d.type || msg.kind;
+      const eventName = d.event_name || d.signal_id || '';
+      if (msg.kind === 'node_executed') {
+        let label = '';
+        if (nodeType === 'trigger') label = '⚡ 触发节点';
+        else if (nodeType === 'record') label = '📝 记录: ' + (eventName || d.node_id);
+        else if (nodeType === 'record_end') label = '⏹ 记录终止: ' + (eventName || d.node_id);
+        else if (nodeType === 'execute') label = '🛠 执行动作: ' + (d.actuator_id || '');
+        else if (nodeType === 'delay') label = '⏱ 延时 ' + (d.duration_s || '') + '秒';
+        else if (nodeType === 'and') label = '📦 逻辑与输出';
+        else if (nodeType === 'not') label = '❌ 逻辑非放行';
+        else if (nodeType === 'fork') label = '🔀 逻辑分叉';
+        else if (nodeType === 'condition') label = '🔀 条件判断: ' + (d.result ? '✅真' : '❌假');
+        else if (nodeType === 'loop_iteration') label = '🔄 循环 第' + d.iteration + '次';
+        else label = '🔹 ' + (nodeType || msg.kind);
+        log(label, 'info');
+      } else if (msg.kind === 'node_triggered') {
+        log('⚡ 触发: ' + (eventName || d.node_id), 'success');
+      } else if (msg.kind === 'sniffer_captured') {
+        log('👁 探针捕获: ' + (eventName || d.signal_id || ''), 'info');
+      } else if (msg.kind === 'loop_iteration') {
+        // B3 fix: 显示循环迭代事件
+        log('🔄 循环 第' + (d.iteration || '?') + '次', 'info');
+      } else if (msg.kind === 'loop_exit') {
+        // B3 fix: 显示循环退出事件
+        log('🔄 循环退出: ' + (d.reason || d.iterations + '次迭代' || '达到条件'), 'info');
+      } else if (msg.kind === 'loop_timeout') {
+        // B3 fix: 显示循环超时事件
+        log('⏰ 循环超时 (' + (d.timeout_s || '?') + '秒),强制退出', 'warn');
+      }
     }
   };
   ws.onclose = () => {
@@ -361,6 +409,11 @@ async function enterExperiment(expId) {
       if (typeof updateFlowEditorAccess === 'function') {
         updateFlowEditorAccess();
       }
+      // D-30: 重新加载信号源（带 experiment_id，触发摄像头 zone 注册）
+      if (typeof loadSignalSources === 'function') {
+        _cachedSources = null;  // 清除缓存，强制重取
+        loadSignalSources();
+      }
     }
 
     // G3-FIN-1: 自动加载实验关联的流程
@@ -392,7 +445,7 @@ async function startExpRun(expId) {
   const exp = await api(`/api/experiments/${expId}`);
   toast(`正在启动实验: ${exp.name}`, 'info');
   log(`启动实验: ${exp.name} (${exp.subject_id})`, 'info');
-  document.getElementById('btnStop').disabled = false;
+  setBtnStop(false);
   const count = exp.max_trigger_count || 0;
 
   const badge = document.getElementById('currentExpBadge');
@@ -419,7 +472,7 @@ async function startExpRun(expId) {
     startMonitorPoll(result.session_id);
   } catch (e) {
     toast('启动失败: ' + e.message, 'error');
-    document.getElementById('btnStop').disabled = true;
+    setBtnStop(true);
   }
 }
 
@@ -516,7 +569,7 @@ async function stopExperiment() {
   } catch (e) {
     toast('停止失败: ' + e.message, 'error');
   }
-  document.getElementById('btnStop').disabled = true;
+  setBtnStop(true);
   if (typeof clearExperimentContext === 'function') {
     clearExperimentContext();
   }
@@ -530,6 +583,8 @@ function startMonitorPoll(sessionId) {
   currentSessionId = sessionId;
   if (monitorInterval) clearInterval(monitorInterval);
   const start = Date.now();
+  const shownEventKeys = new Set();
+  let lastEventCount = 0;
   monitorInterval = setInterval(async () => {
     try {
       const state = await api('/api/experiment/state');
@@ -537,7 +592,7 @@ function startMonitorPoll(sessionId) {
       if (state.session === 'completed' || state.session === 'none' || state.engine !== 'running') {
         clearInterval(monitorInterval);
         monitorInterval = null;
-        document.getElementById('btnStop').disabled = true;
+        setBtnStop(true);
       }
     } catch (e) { /* ignore */ }
     const elapsed = Math.floor((Date.now() - start) / 1000);
@@ -546,6 +601,33 @@ function startMonitorPoll(sessionId) {
       try {
         const ev = await api(`/api/sessions/${sessionId}/events`);
         document.getElementById('monEvents').textContent = ev.events.length;
+        // 将新增的引擎事件渲染到实时日志（轮询补充 WebSocket 可能遗漏的事件）
+        if (ev.events.length > lastEventCount) {
+          for (let i = lastEventCount; i < ev.events.length; i++) {
+            const e2 = ev.events[i];
+            const key = e2.event_type + '_' + (e2.timestamp || i);
+            if (shownEventKeys.has(key)) continue;
+            shownEventKeys.add(key);
+            if (e2.event_type === 'node_executed') {
+              const d2 = typeof e2.raw_payload === 'string' ? JSON.parse(e2.raw_payload) : (e2.raw_payload || {});
+              const nt = d2.type || '';
+              if (nt === 'record') log('📝 记录: ' + (d2.event_name || e2.node_id), 'info');
+              else if (nt === 'record_end') log('⏹ 记录终止: ' + (d2.event_name || e2.node_id), 'info');
+              else if (nt === 'trigger') log('⚡ 触发节点', 'info');
+              else if (nt === 'execute') log('🛠 执行: ' + (d2.actuator_id || ''), 'info');
+            } else if (e2.event_type === 'loop_iteration') {
+              const d2 = typeof e2.raw_payload === 'string' ? JSON.parse(e2.raw_payload) : (e2.raw_payload || {});
+              log('🔄 循环 第' + (d2.iteration || '?') + '次', 'info');
+            } else if (e2.event_type === 'loop_exit') {
+              const d2 = typeof e2.raw_payload === 'string' ? JSON.parse(e2.raw_payload) : (e2.raw_payload || {});
+              log('🔄 循环退出: ' + (d2.reason || d2.iterations + '次迭代' || '达到条件'), 'info');
+            } else if (e2.event_type === 'loop_timeout') {
+              const d2 = typeof e2.raw_payload === 'string' ? JSON.parse(e2.raw_payload) : (e2.raw_payload || {});
+              log('⏰ 循环超时 (' + (d2.timeout_s || '?') + '秒),强制退出', 'warn');
+            }
+          }
+          lastEventCount = ev.events.length;
+        }
       } catch (e) { /* ignore */ }
     }
   }, 1000);
@@ -595,7 +677,7 @@ async function runFlow() {
       body: JSON.stringify({ experiment_id: currentExperimentId, duration: 10 }),
     });
 
-    document.getElementById('btnStop').disabled = false;
+    setBtnStop(false);
     toast('✅ 实验已启动，已切换到监控面板', 'success');
     log('实验已启动', 'info');
     startMonitorPoll(runResult.session_id);
@@ -603,7 +685,7 @@ async function runFlow() {
   } catch (e) {
     toast('❌ 运行失败：' + e.message, 'error');
     log('运行失败: ' + e.message, 'error');
-    document.getElementById('btnStop').disabled = true;
+    setBtnStop(true);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = origText; }
   }
@@ -659,7 +741,7 @@ renderExperimentList();
     if (state.engine === 'running' && state.session_id) {
       currentSessionId = state.session_id;
       startMonitorPoll(state.session_id);
-      document.getElementById('btnStop').disabled = false;
+      setBtnStop(false);
       // Switch to monitor tab
       const monitorTab = document.querySelector('[data-tab="monitor"]');
       if (monitorTab) monitorTab.click();

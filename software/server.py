@@ -188,6 +188,12 @@ async def api_start_mock(data: dict = None, count: int = 10, subject_id: str = "
         if _experiment_active:
             raise HTTPException(400, "实验正在运行中，请先停止")
 
+        # 主问题修复: 有关联流程的实验不能用 start-mock,引导用户去流程编辑器
+        if experiment_id:
+            existing_flow = load_flow(experiment_id)
+            if existing_flow and existing_flow.get("nodes") and len(existing_flow.get("nodes", {})) > 0:
+                raise HTTPException(400, "该实验已关联流程设计,请切换到「流程编辑器」标签页,点击「▶ 运行流程」按钮启动")
+
         # Bug #6: Stop any existing engine/bus/session before overwriting
         if engine:
             await engine.stop()
@@ -517,10 +523,20 @@ async def api_run_flow(data: dict):
                 await asyncio.sleep(0.1)
                 event_store.update_session_state(s.id, s.state.value)
                 raw = event_store.get_events(s.id)
+                # 统计 RECORD 事件数（node_executed 中 type=record/record_end）
+                record_count = 0
+                for ev in raw:
+                    if ev.get("event_type") == "node_executed":
+                        try:
+                            rp = json.loads(ev.get("raw_payload", "{}")) if isinstance(ev.get("raw_payload"), str) else (ev.get("raw_payload") or {})
+                            if rp.get("type") in ("record", "record_end"):
+                                record_count += 1
+                        except (json.JSONDecodeError, TypeError):
+                            pass
                 processor = DataProcessor()
                 structured = processor.to_structured(processor.process(raw), session_id=s.id, subject_id=subject_id, session_name=safe_name)
                 csv_path = export_session_csv(structured, s.id, os.path.join(PROJECT_ROOT, "data_store"), subject_id=subject_id, session_name=safe_name)
-                await broadcast({"type": "flow_complete", "session_id": s.id, "event_count": len(raw), "csv_path": csv_path})
+                await broadcast({"type": "flow_complete", "session_id": s.id, "event_count": len(raw), "record_count": record_count, "csv_path": csv_path})
             except Exception as exc:
                 logger.exception(f"流程实验异常: {exc}")
             finally:
@@ -534,7 +550,7 @@ async def api_run_flow(data: dict):
     return {"status": "started", "session_id": s.id, "flow_name": flow.name}
 
 
-def _on_action(cmd: dict, s: Session) -> bool:
+async def _on_action(cmd: dict, s: Session) -> bool:
     event_store.append_event(
         session_id=s.id, event_type="output_executed",
         ts_ms=int(time.time() * 1000), node_id=cmd.get("node_id", ""),
@@ -550,6 +566,19 @@ def _on_engine_evt(kind: str, data: dict, s: Session):
         node_id=data.get("node_id", ""), signal_id=data.get("signal_id", ""),
         raw_payload=data,
     )
+    # 实时推送引擎事件到前端 WebSocket（监控面板用）
+    # 加 try/except 防止 event loop 未就绪时崩溃
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(broadcast({
+            "type": "engine_event",
+            "kind": kind,
+            "data": data,
+            "session_id": s.id,
+        }))
+    except RuntimeError:
+        # 没有运行中的 event loop（理论上不会发生，但防御性处理）
+        pass
 
 
 @app.post("/api/device/connect")
@@ -824,6 +853,10 @@ async def api_camera_save_config(data: dict):
     config = data.get("config", {})
     experiment_id = data.get("experiment_id", None)
     _save_camera_config(config, experiment_id)
+    # D-30: 配置保存后清除注册中心缓存，下次 _get_available_sources 会重新加载
+    from protocol.device_registry import invalidate_registry
+    invalidate_registry(experiment_id or "")
+    invalidate_registry("")  # 同时清除全局缓存（防止前端不带 experiment_id 时拿到旧数据）
     return {"ok": True}
 
 
