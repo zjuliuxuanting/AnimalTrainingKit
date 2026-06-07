@@ -7,6 +7,8 @@
 .trae/
 .idea/
 .vscode/
+.workbuddy/
+.codex/
 
 # Python
 __pycache__/
@@ -41,13 +43,26 @@ software/data_store/experiments/
 # Syncthing
 .stignore
 
+# Archive
+_存档/
+
+# Node (Python project, node only for Playwright)
+node_modules/
+package.json
+package-lock.json
+playwright.config.js
+.playwright-mcp/
+skills-lock.json
+
 # Project docs (not part of software repo)
 manage.sh
 角色/
 项目/
+AGENTS.md
+LICENSE
+docs/
 
 # Project
-.codex/
 .project_index*
 e2e/test-results/
 e2e/playwright-report/

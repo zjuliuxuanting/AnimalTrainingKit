@@ -472,6 +472,8 @@ class Engine:
         duration_s = node.params.get("duration_s", 1.0)
         ms = duration_s * 1000.0
         logger.info(f"延时 {duration_s}秒 ({ms}ms): [{node.id}]")
+        # A5 fix: 在 sleep 前记录延时开始事件，确保 DELAY 和 END 时间戳差 >= duration_s
+        self._emit_engine_event("delay_started", {"node_id": node.id, "type": "delay", "duration_s": duration_s})
         await asyncio.sleep(duration_s)
         self._emit_engine_event("node_executed", {"node_id": node.id, "type": "delay", "duration_s": duration_s})
         await self._step_to_next(node)
