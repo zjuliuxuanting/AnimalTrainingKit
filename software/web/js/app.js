@@ -670,11 +670,14 @@ async function runFlow() {
     });
     toast('✅ 流程已保存，正在启动实验...', 'success');
 
+    const expInfo = await api(`/api/experiments/${currentExperimentId}`);
+    const duration = Math.max(1, Math.min(86400, (parseInt(expInfo.max_duration_min || 0) || 1) * 60));
+
     // Step 2: Start the experiment
     const runResult = await api('/api/experiment/run-flow', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ experiment_id: currentExperimentId, duration: 10 }),
+      body: JSON.stringify({ experiment_id: currentExperimentId, duration }),
     });
 
     setBtnStop(false);

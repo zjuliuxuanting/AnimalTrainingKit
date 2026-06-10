@@ -182,6 +182,21 @@ def _check_node_params(graph: FlowGraph) -> ValidationResult:
                     "source（数据来源）不能为空"
                 )
             operator = node.params.get("operator", "")
+            if source not in (
+                "trigger_count",
+                "counter",
+                "feeds_today",
+                "daily_quota_count",
+                "quota_locked",
+                "quota_available",
+                "quota_reached",
+                "cooldown_remaining_s",
+                "day_index",
+            ):
+                result.add_error(
+                    f"条件判断节点 [{node.id}] {node.label}："
+                    f"无效的 source '{source}'"
+                )
             if operator not in ("eq", "neq", "gt", "lt", "gte", "lte"):
                 result.add_error(
                     f"条件判断节点 [{node.id}] {node.label}："
@@ -198,6 +213,13 @@ def _check_node_params(graph: FlowGraph) -> ValidationResult:
                     f"条件判断节点 [{node.id}] {node.label}："
                     f"value 需要 0~999999（当前 {value}）"
                 )
+            daily_quota_count = node.params.get("daily_quota_count")
+            if daily_quota_count not in (None, ""):
+                if not isinstance(daily_quota_count, (int, float)) or daily_quota_count < 1 or daily_quota_count > 10000:
+                    result.add_error(
+                        f"条件判断节点 [{node.id}] {node.label}："
+                        f"daily_quota_count 需要 1~10000（当前 {daily_quota_count}）"
+                    )
         elif node.node_type in (NodeType.RECORD, NodeType.RECORD_END):
             event_name = node.params.get("event_name")
             if not event_name or event_name.strip() == "":
@@ -205,6 +227,32 @@ def _check_node_params(graph: FlowGraph) -> ValidationResult:
                     f"记录节点 [{node.id}] {node.label}："
                     "event_name 不能为空"
                 )
+            counter_op = node.params.get("counter_op", "")
+            if counter_op and counter_op not in ("+1", "=0", "=1", "-1"):
+                result.add_error(
+                    f"记录节点 [{node.id}] {node.label}："
+                    f"无效的 counter_op '{counter_op}'"
+                )
+            state_op = node.params.get("state_op", "")
+            if state_op and state_op not in ("feed_success", "start_cooldown", "new_day_reset"):
+                result.add_error(
+                    f"记录节点 [{node.id}] {node.label}："
+                    f"无效的 state_op '{state_op}'"
+                )
+            daily_quota_count = node.params.get("daily_quota_count")
+            if daily_quota_count not in (None, ""):
+                if not isinstance(daily_quota_count, (int, float)) or daily_quota_count < 1 or daily_quota_count > 10000:
+                    result.add_error(
+                        f"记录节点 [{node.id}] {node.label}："
+                        f"daily_quota_count 需要 1~10000（当前 {daily_quota_count}）"
+                    )
+            cooldown_s = node.params.get("cooldown_s")
+            if cooldown_s not in (None, ""):
+                if not isinstance(cooldown_s, (int, float)) or cooldown_s < 0.1 or cooldown_s > 86400:
+                    result.add_error(
+                        f"记录节点 [{node.id}] {node.label}："
+                        f"cooldown_s 需要 0.1~86400（秒）（当前 {cooldown_s}）"
+                    )
         elif node.node_type == NodeType.TRIGGER:
             # D-17: simplified to only signal_id (string, required, non-empty)
             signal_id = node.params.get("signal_id")

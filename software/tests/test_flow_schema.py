@@ -749,3 +749,35 @@ class TestSchemaVsSpec:
         """RECORD_END 无 experiment_type 字段。"""
         keys = [f['key'] for f in NODE_SCHEMAS['record_end']['fields']]
         assert 'experiment_type' not in keys
+
+
+class TestDailyQuotaSchema:
+    """Sprint v1.1.3: 第5链路最小持久状态字段由 shared_schema 提供。"""
+
+    def test_condition_can_read_quota_state_sources(self):
+        from session.shared_schema import get_expanded_params
+
+        fields = get_expanded_params("condition")
+        source_field = next(f for f in fields if f["key"] == "source")
+        options = {opt["value"] for opt in source_field["options"]}
+
+        assert "feeds_today" in options
+        assert "quota_available" in options
+        assert "quota_reached" in options
+        assert "cooldown_remaining_s" in options
+        assert any(f["key"] == "daily_quota_count" for f in fields)
+
+    def test_record_can_write_quota_state_ops(self):
+        from session.shared_schema import get_expanded_params
+
+        fields = get_expanded_params("record")
+        keys = [f["key"] for f in fields]
+        state_op_field = next(f for f in fields if f["key"] == "state_op")
+        ops = {opt["value"] for opt in state_op_field["options"]}
+
+        assert "state_op" in keys
+        assert "daily_quota_count" in keys
+        assert "cooldown_s" in keys
+        assert "feed_success" in ops
+        assert "start_cooldown" in ops
+        assert "new_day_reset" in ops

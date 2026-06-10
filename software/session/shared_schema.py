@@ -70,6 +70,27 @@ PARAM_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "default": "+1", "required": False,
         "help": "计数器操作",
     },
+    "daily_quota_count": {
+        "type": "number", "min": 1, "max": 10000, "step": 1,
+        "default": 3, "unit": "次/颗", "required": False,
+        "help": "每日投喂上限，软件只按投喂次数/颗数计量",
+    },
+    "cooldown_s": {
+        "type": "number", "min": 0.1, "max": 86400, "step": 0.1,
+        "default": 72000, "unit": "秒", "required": False,
+        "help": "达到日额度后的冷却时长；验收可压缩为 20 秒",
+    },
+    "state_op": {
+        "type": "select",
+        "options": [
+            {"value": "", "label": "不写持久状态"},
+            {"value": "feed_success", "label": "投喂成功：feeds_today +1"},
+            {"value": "start_cooldown", "label": "开始冷却：锁定额度"},
+            {"value": "new_day_reset", "label": "新日重置：清零并解锁"},
+        ],
+        "default": "", "required": False,
+        "help": "第5链路专用：RECORD 写入最小持久额度状态",
+    },
     "actuator_id": {
         "type": "select", "options": "dynamic",
         "required": True,
@@ -102,9 +123,16 @@ PARAM_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "options": [
             {"value": "trigger_count", "label": "TRIGGER 累计计数"},
             {"value": "counter", "label": "指定计数器"},
+            {"value": "feeds_today", "label": "今日已投喂次数"},
+            {"value": "daily_quota_count", "label": "每日投喂上限"},
+            {"value": "quota_locked", "label": "额度冷却锁定中"},
+            {"value": "quota_available", "label": "今日额度仍可用"},
+            {"value": "quota_reached", "label": "今日额度已达上限"},
+            {"value": "cooldown_remaining_s", "label": "剩余冷却秒数"},
+            {"value": "day_index", "label": "压缩日序号"},
         ],
         "default": "trigger_count", "required": True,
-        "help": "条件判断数据来源：TRIGGER 上游累计数或指定计数器",
+        "help": "条件判断数据来源：TRIGGER 上游累计数、指定计数器或第5链路持久额度状态",
     },
     "value": {
         "type": "number", "min": 0, "max": 999999,
@@ -151,8 +179,8 @@ NODE_SCHEMA: Dict[str, Dict[str, Any]] = {
         "color": "#5C6BC0", "icon": "🔀",
         "ports": {"inputs": 1, "outputs": 2,
                    "output_labels": ["真", "假"], "output_ports": ["true", "false"]},
-        "params": ["source", "operator", "value"],
-        "help": "根据上游数据做条件判断。source 选择数据来源（TRIGGER 累计计数或计数器），operator 选择比较方式，value 设置阈值。",
+        "params": ["source", "operator", "value", "daily_quota_count"],
+        "help": "根据上游数据做条件判断。source 可读取 TRIGGER 累计数、计数器或第5链路持久额度状态。",
     },
     "execute": {
         "label": "执行动作", "label_en": "Execute",
@@ -195,8 +223,8 @@ NODE_SCHEMA: Dict[str, Dict[str, Any]] = {
         "label": "记录事件", "label_en": "Record",
         "color": "#43A047", "icon": "📝",
         "ports": "multi_in",  # 多入1出（PORT-V2）
-        "params": ["event_name", "counter_name", "counter_op"],
-        "help": "记录实验事件。当前流程执行到此处时，记录一条带时间戳的数据。可选：做计数器操作（+1/=0/=1/-1）。",
+        "params": ["event_name", "counter_name", "counter_op", "state_op", "daily_quota_count", "cooldown_s"],
+        "help": "记录实验事件。可选做运行时计数器操作；第5链路可写入最小持久额度状态。",
     },
     "record_end": {
         "label": "记录终止", "label_en": "Record End",

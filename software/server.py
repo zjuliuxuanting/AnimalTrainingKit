@@ -40,6 +40,7 @@ from session.engine import Engine
 from session.validator import validate_flow
 from data.database import Database
 from data.event_store import EventStore
+from data.quota_state import QuotaStateStore
 from data.processor import DataProcessor
 from data.export import export_session_csv
 from data.experiment_manager import set_experiments_root, create_experiment, list_experiments, get_experiment, update_experiment, delete_experiment, batch_delete_experiments, get_all_camera_statuses, clone_experiment, save_flow, load_flow
@@ -49,6 +50,7 @@ DEFAULT_PORT = 8000
 
 db: Optional[Database] = None
 event_store: Optional[EventStore] = None
+quota_state_store: Optional[QuotaStateStore] = None
 bus: Optional[SignalBus] = None
 engine: Optional[Engine] = None
 session: Optional[Session] = None
@@ -62,7 +64,7 @@ _camera_config_path = os.path.join(PROJECT_ROOT, "data_store", "camera_config.js
 
 @asynccontextmanager
 async def lifespan(app_instance):
-    global db, event_store, _loop
+    global db, event_store, quota_state_store, _loop
     _loop = asyncio.get_event_loop()
     db_dir = os.path.join(PROJECT_ROOT, "data_store")
     old_db_dir = os.path.join(PROJECT_ROOT, "data")
@@ -72,6 +74,7 @@ async def lifespan(app_instance):
     db = Database(os.path.join(db_dir, "behavior_box.db"))
     db.open()
     event_store = EventStore(db)
+    quota_state_store = QuotaStateStore(db)
     set_experiments_root(os.path.join(PROJECT_ROOT, "data_store", "experiments"))
     yield
     if engine:
@@ -442,7 +445,7 @@ async def api_run_flow(data: dict):
     except Exception as e:
         raise HTTPException(400, f"流程解析失败: {e}")
 
-    available_signals = [s["id"] for s in _get_available_sources()]
+    available_signals = [s["id"] for s in _get_available_sources(experiment_id)]
     result = validate_flow(flow, available_signals=available_signals)
     if not result.valid:
         raise HTTPException(400, f"流程校验失败: {result.errors}")
@@ -471,9 +474,10 @@ async def api_run_flow(data: dict):
         s.load(config)
         event_store.ensure_session(s.id, name=config.name, config_json=json.dumps({
             "name": safe_name, "subject_id": subject_id, "flow_name": flow.name,
-        }, ensure_ascii=False))
+        }, ensure_ascii=False), experiment_id=experiment_id)
 
         e = Engine()
+        e.set_quota_state_store(quota_state_store, experiment_id or safe_name)
         e.set_send_action(lambda cmd: _on_action(cmd, s))
         e.set_on_engine_event(lambda kind, data: _on_engine_evt(kind, data, s))
 

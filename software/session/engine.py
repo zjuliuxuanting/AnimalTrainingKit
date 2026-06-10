@@ -53,8 +53,12 @@ class EngineContext:
     default_exception_policy: ExceptionPolicy = ExceptionPolicy.TERMINATE
     # F2: FORK 分支中等待信号的 TRIGGER 节点 ID 集合（并行追踪）
     fork_waiting_triggers: set = field(default_factory=set)
-    # F6: FORK 非 TRIGGER 分支的 asyncio Task 列表（避免同步阻塞主循环）
-    fork_branch_tasks: list = field(default_factory=list)
+    # F6/B1: FORK 分支任务列表，每项包含 task + has_trigger 标志
+    # has_trigger=True 的分支在 TRIGGER 匹配时会被取消（竞态分支）
+    # has_trigger=False 的分支（如 stop 分支的 DELAY→EXECUTE→RECORD）不受取消，允许完成
+    fork_branches: list = field(default_factory=list)
+    # B1: 已被主流程执行完毕的节点集合，用于防止 FORK 分支重复执行收敛点
+    _executed_nodes: set = field(default_factory=set)
 
     def set_variable(self, name: str, value: Any):
         self.variables[name] = value
@@ -111,6 +115,8 @@ class Engine:
         self._send_action: Optional[Callable[[Dict[str, Any]], Awaitable[bool]]] = None
         self._on_engine_event: Optional[Callable[[str, Dict[str, Any]], None]] = None
         self._on_state_change: Optional[Callable[[EngineState, EngineState], None]] = None
+        self._quota_state_store = None
+        self._quota_scope_id: str = ""
 
         # LOOP body 深度计数器（支持嵌套循环）
         self._loop_body_depth: int = 0
@@ -137,6 +143,10 @@ class Engine:
 
     def set_on_state_change(self, cb: Callable[[EngineState, EngineState], None]):
         self._on_state_change = cb
+
+    def set_quota_state_store(self, store, scope_id: str):
+        self._quota_state_store = store
+        self._quota_scope_id = scope_id or ""
 
     def _set_state(self, new_state: EngineState):
         old = self._state
@@ -177,11 +187,11 @@ class Engine:
             self._ctx.session.stop()
             # F2: 清理 FORK 并行等待集合
             self._ctx.fork_waiting_triggers.clear()
-            # F6: 取消并清理 FORK 分支任务
-            for t in self._ctx.fork_branch_tasks:
-                if not t.done():
-                    t.cancel()
-            self._ctx.fork_branch_tasks.clear()
+            # F6/B1: 取消并清理 FORK 分支任务（仅 TRIGGER 竞态分支）
+            for br in self._ctx.fork_branches:
+                if not br["task"].done():
+                    br["task"].cancel()
+            self._ctx.fork_branches.clear()
         # G3-FIN-3: 清理 SNIFFER 后台监听任务
         await self._cleanup_sniffers()
         self._set_state(EngineState.STOPPED)
@@ -298,12 +308,21 @@ class Engine:
             await self._handle_error(current_node, event)
 
     def _cancel_fork_branches(self):
-        """F6: 取消所有 FORK 非 TRIGGER 分支任务（一个分支做出选择后，其他分支放弃）"""
-        if self._ctx and self._ctx.fork_branch_tasks:
-            for t in self._ctx.fork_branch_tasks:
-                if not t.done():
-                    t.cancel()
-            self._ctx.fork_branch_tasks.clear()
+        """B1 fix: 仅取消含 TRIGGER 的竞态分支，保留非 TRIGGER 分支（如 stop 分支的 DELAY→EXECUTE→RECORD）。
+
+        原实现 cancel 所有 fork_branch_tasks，导致 stop 分支的 DELAY 被取消、永远不会完成。
+        修复后：只有 has_trigger=True 的分支（与主流程竞争信号的 TRIGGER 分支）被取消，
+        has_trigger=False 的分支（stop 分支/惩罚路径）继续执行直到完成或达到收敛点。
+        """
+        if self._ctx and self._ctx.fork_branches:
+            remaining = []
+            for br in self._ctx.fork_branches:
+                if br["has_trigger"] and not br["task"].done():
+                    br["task"].cancel()
+                    logger.debug(f"B1: 取消 TRIGGER 竞态分支")
+                elif not br["task"].done():
+                    remaining.append(br)
+            self._ctx.fork_branches = remaining
 
     def _match_signal_via_registry(self, node_signal_id: str, event_signal_id: str) -> bool:
         """F4 fix: 通过注册中心匹配信号。当 node_signal_id 是注册中心 source_id 时，
@@ -428,6 +447,8 @@ class Engine:
                 logger.debug(f"LOOP body mode (depth={self._loop_body_depth}): 跳过 END 节点 [{node.id}]")
                 return
             self._emit_engine_event("node_executed", {"node_id": node.id, "type": "end"})
+            # B1: END 节点也标记为已执行，防止 FORK 分支重复执行
+            self._ctx._executed_nodes.add(node.id)
             await self.stop()
             return
 
@@ -468,6 +489,11 @@ class Engine:
             # SNIFFER 0入0出，不参与主流程，无事可做
             pass
 
+        # B1: 标记节点为已执行，防止 FORK 分支在收敛点重复执行
+        # END 节点在上方 early return 中已标记
+        if node.node_type != NodeType.END:
+            self._ctx._executed_nodes.add(node.id)
+
     async def _execute_delay(self, node: FlowNode):
         duration_s = node.params.get("duration_s", 1.0)
         ms = duration_s * 1000.0
@@ -487,6 +513,22 @@ class Engine:
         if source == "counter":
             counter_name = node.params.get("counter_name", "default")
             actual_value = self._ctx.counters.get(counter_name, 0)
+        elif source in (
+            "feeds_today",
+            "daily_quota_count",
+            "quota_locked",
+            "quota_available",
+            "quota_reached",
+            "cooldown_remaining_s",
+            "day_index",
+        ):
+            if not self._quota_state_store:
+                raise RuntimeError(f"条件判断需要持久配额状态，但未配置状态仓库: source={source}")
+            actual_value = self._quota_state_store.get_value(
+                self._quota_scope_id,
+                source,
+                daily_quota_count=node.params.get("daily_quota_count"),
+            )
         else:
             # trigger_count: 全局触发计数器（所有 TRIGGER 节点匹配时递增）
             actual_value = self._ctx.counters.get("trigger_count", 0)
@@ -513,7 +555,7 @@ class Engine:
         port_id = "true" if result else "false"
         logger.info(f"条件判断 [{node.id}]: source={source}, actual={actual_value} {operator} {expected_value} -> {port_id}")
 
-        self._emit_engine_event("node_executed", {
+        event_data = {
             "node_id": node.id,
             "type": "condition",
             "source": source,
@@ -521,7 +563,22 @@ class Engine:
             "expected_value": expected_value,
             "operator": operator,
             "result": result,
-        })
+        }
+        if source in (
+            "feeds_today",
+            "daily_quota_count",
+            "quota_locked",
+            "quota_available",
+            "quota_reached",
+            "cooldown_remaining_s",
+            "day_index",
+        ) and self._quota_state_store:
+            event_data["quota_state"] = self._quota_state_store.get_state(
+                self._quota_scope_id,
+                daily_quota_count=node.params.get("daily_quota_count"),
+            )
+
+        self._emit_engine_event("node_executed", event_data)
 
         for edge in self._ctx.flow.get_outgoing_edges(node.id):
             if edge.source.port_id == port_id:
@@ -585,6 +642,9 @@ class Engine:
         # 检查最大次数（max_iter <= 0 表示不限制次数，仅靠 timeout 控制）
         current = self._ctx.loop_iterations.get(counter_key, 0)
         if max_iter > 0 and current >= max_iter:
+            # B3 fix: 引擎已在 STOPPING/STOPPED 状态时，跳过
+            if self._state in (EngineState.STOPPING, EngineState.STOPPED):
+                return
             logger.info(f"循环 [{node.id}] 达到最大次数 {max_iter}，退出")
             self._emit_engine_event("loop_exit", {"node_id": node.id, "iterations": current})
             await self._exit_loop_path(node, counter_key)
@@ -634,6 +694,11 @@ class Engine:
             if should_continue:
                 await self._execute_loop(node)
             else:
+                # B3 fix: 引擎已在 STOPPING/STOPPED 状态时，跳过 loop_exit 和退出分支
+                # 防止递归调用栈逐层返回时重复 emit loop_exit
+                if self._state in (EngineState.STOPPING, EngineState.STOPPED):
+                    logger.debug(f"B3: 引擎状态 {self._state.value}，跳过 LOOP 退出 emit")
+                    return
                 # B1 cleanup: 清除待重入标记,防止 _step_to_next 误重入已退出的 LOOP
                 if self._pending_loop_continue == node.id:
                     self._pending_loop_continue = None
@@ -649,6 +714,11 @@ class Engine:
         deadline_key = f"loop_deadline_{node.id}"
         self._ctx.variables.pop(deadline_key, None)
         self._ctx.loop_iterations.pop(counter_key, None)
+        # B3 fix: 引擎已在 STOPPING/STOPPED 状态时，跳过退出分支执行
+        # 防止递归调用栈逐层返回时重复执行 END 节点（CancelledError 未中断同步代码路径）
+        if self._state not in (EngineState.RUNNING, EngineState.PAUSED):
+            logger.debug(f"B3: 引擎状态 {self._state.value}，跳过 LOOP 退出分支执行")
+            return
         # B2 fix: 退出路径不应算作循环体内,临时清零 _loop_body_depth
         # 防止 exit→END 时被 END 节点的 loop_body_depth 卫语句拦截 stop()
         saved_depth = self._loop_body_depth
@@ -686,8 +756,25 @@ class Engine:
             data["counter_op"] = counter_op
             data["counter_value"] = self._ctx.counters[counter_name]
 
+        state_op = node.params.get("state_op", "")
+        if state_op:
+            if not self._quota_state_store:
+                raise RuntimeError(f"记录节点需要持久配额状态，但未配置状态仓库: state_op={state_op}")
+            quota_state = self._quota_state_store.apply_record_op(
+                self._quota_scope_id,
+                state_op,
+                daily_quota_count=node.params.get("daily_quota_count"),
+                cooldown_s=node.params.get("cooldown_s"),
+            )
+            data["state_op"] = state_op
+            data["quota_state"] = quota_state
+
         self._ctx.session._record_event(event_name, data)
-        self._emit_engine_event("node_executed", {"node_id": node.id, "type": "record", "event_name": event_name})
+        event_data = {"node_id": node.id, "type": "record", "event_name": event_name}
+        if "state_op" in data:
+            event_data["state_op"] = data["state_op"]
+            event_data["quota_state"] = data["quota_state"]
+        self._emit_engine_event("node_executed", event_data)
         await self._step_to_next(node)
 
     async def _execute_and(self, node: FlowNode, incoming_edge: Edge):
@@ -819,10 +906,12 @@ class Engine:
             if target.node_type == NodeType.TRIGGER:
                 triggers.append(target)
             else:
-                # F6 fix: 非 TRIGGER 分支启动为并发 task，不阻塞主循环
+                # B1 fix: 非 TRIGGER 分支启动为并发 task，记录 has_trigger=False
+                # _cancel_fork_branches 仅取消 has_trigger=True 的竞态分支，
+                # 保留 stop 分支（DELAY→EXECUTE→RECORD）允许完成惩罚路径
                 task = asyncio.create_task(self._execute_fork_branch(target, edge, node.id))
-                self._ctx.fork_branch_tasks.append(task)
-                logger.debug(f"FORK [{node.id}]: 后台分支 {target.node_type.value} [{target.id}] 启动")
+                self._ctx.fork_branches.append({"task": task, "has_trigger": False})
+                logger.debug(f"FORK [{node.id}]: 后台分支 {target.node_type.value} [{target.id}] 启动 (has_trigger=False)")
 
         if triggers:
             # 第一个 TRIGGER 设为主追踪节点，其余加入并行等待集合
@@ -832,13 +921,16 @@ class Engine:
                 logger.debug(f"FORK [{node.id}]: TRIGGER [{t.id}] 加入并行等待集合")
 
     async def _execute_fork_branch(self, node: FlowNode, incoming_edge: Edge, fork_node_id: str):
-        """F6: 以 asyncio task 方式执行 FORK 的非 TRIGGER 分支。
+        """B1 fix: 以 asyncio task 方式执行 FORK 的非 TRIGGER 分支。
 
         分支执行链持续直到遇到 TRIGGER（交还主循环）或到达终端节点。
         DELAY 节点在 task 内 await asyncio.sleep，不阻塞主循环事件处理。
 
+        B1 收敛保护：当分支到达已被主流程执行的节点（收敛点）时停止，
+        防止重复执行下游共享节点（如 delay_trial_end → loop_1）导致事件重复触发。
+
         竞态保护：当主循环中另一分支的 TRIGGER 先匹配时，
-        _cancel_fork_branches 会取消本 task，防止并行执行同一后续节点。
+        _cancel_fork_branches 会取消 has_trigger=True 的 task，不影响本分支。
         """
         try:
             current = node
@@ -851,6 +943,11 @@ class Engine:
                     else:
                         self._ctx.fork_waiting_triggers.add(current.id)
                     logger.debug(f"FORK branch [{fork_node_id}]: TRIGGER [{current.id}] 加入等待")
+                    break
+
+                # B1 收敛保护：检查目标节点是否已被主流程执行
+                if current.id in self._ctx._executed_nodes:
+                    logger.info(f"B1: FORK 分支 [{fork_node_id}] 到达已执行节点 [{current.id}]，停止分支（防止重复执行收敛点）")
                     break
 
                 # 执行当前节点（DELAY 会 asyncio.sleep，不阻塞主循环）
@@ -867,7 +964,12 @@ class Engine:
                     break
                 # 取第一条出边（FORK 分支内通常单线）
                 next_edge = outgoing[0]
-                current = self._ctx.flow.nodes.get(next_edge.target.node_id)
+                next_node = self._ctx.flow.nodes.get(next_edge.target.node_id)
+                # B1 收敛保护：预检下一个节点是否已被主流程执行
+                if next_node and next_node.id in self._ctx._executed_nodes:
+                    logger.info(f"B1: FORK 分支 [{fork_node_id}] 下游节点 [{next_node.id}] 已被主流程执行，停止分支")
+                    break
+                current = next_node
                 edge = next_edge
 
         except asyncio.CancelledError:

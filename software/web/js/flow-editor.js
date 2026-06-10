@@ -54,7 +54,7 @@ function showConfigPanel(id) {
         const val = typeof opt === 'object' ? opt.value : opt;
         const lbl = typeof opt === 'object' ? opt.label : opt;
         const sel = params[field.key] === val ? 'selected' : '';
-        return `<option value="${val}" ${sel}>${lbl}</option>`;
+        return `<option value="${escapeHtml(String(val))}" ${sel}>${escapeHtml(String(lbl))}</option>`;
       }).join('');
       extra += `<label>${field.label}</label><select id="cfg_${field.key}" onchange="updateParam('${id}','${field.key}',this.value)">${opts}</select>`;
     } else if (field.type === 'number') {
