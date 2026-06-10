@@ -432,11 +432,10 @@ function restoreHistory(snapshot) {
   for (const [id, nd] of Object.entries(snapshot.nodes)) {
     const el = createNodeEl(nd.type, nd.label, nd.params);
     el.id = 'node_' + id;
-    el.style.left = nd.left + 'px';
-    el.style.top = nd.top + 'px';
+    flowNodesDiv.appendChild(el);
+    placeNodeWithinCanvas(el, Number(nd.left), Number(nd.top));
     flowNodes[id] = { el, type: nd.type, label: nd.label, params: nd.params || {}, fixed: nd.fixed || false };
     if (!nd.fixed) makeDraggable(el, id);
-    flowNodesDiv.appendChild(el);
   }
   flowEdges = JSON.parse(JSON.stringify(snapshot.edges || []));
   updateSvg();
@@ -492,21 +491,20 @@ function loadFlowData(data) {
       n.id = 'node_' + id;
       const isFixed = nd.node_type === 'start' || nd.node_type === 'end';
       if (nd.node_type === 'start') {
-        n.style.left = '16px';
-        n.style.top = '16px';
+        document.getElementById('flowNodes').appendChild(n);
+        placeNodeWithinCanvas(n, 16, 16);
       } else if (nd.node_type === 'end') {
         const rect = document.getElementById('flowCanvas')?.getBoundingClientRect();
         const cw = rect?.width || 800;
         const ch = rect?.height || 500;
-        n.style.left = (cw - 156) + 'px';
-        n.style.top = (ch - 76) + 'px';
+        document.getElementById('flowNodes').appendChild(n);
+        placeNodeWithinCanvas(n, cw - 156, ch - 76);
       } else {
-        n.style.left = (nd.x || 100) + 'px';
-        n.style.top = (nd.y || 100) + 'px';
+        document.getElementById('flowNodes').appendChild(n);
+        placeNodeWithinCanvas(n, Number(nd.x ?? 100), Number(nd.y ?? 100));
       }
       flowNodes[id] = { el: n, type: nd.node_type, label: nd.label || id, params: nd.params || {}, fixed: isFixed };
       if (isFixed) n.setAttribute('data-fixed', 'true');
-      document.getElementById('flowNodes').appendChild(n);
       makeDraggable(n, id);
       const idx = parseInt(id.split('_')[1]) || 0;
       if (idx > nodeIdCounter) nodeIdCounter = idx;
@@ -519,6 +517,8 @@ function loadFlowData(data) {
     }
   }
   // initFixedNodes() 不在此调用 — loadFlowData() 已正确设置 START/END 的 fixed 属性和 DOM
+  clampAllFlowNodes();
+  requestAnimationFrame(() => clampAllFlowNodes());
   saveHistory();
   updateSvg();
   debugState(false);

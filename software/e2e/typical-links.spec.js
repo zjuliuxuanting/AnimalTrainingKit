@@ -224,6 +224,11 @@ async function createExperiment(page, name) {
   return created.id;
 }
 
+async function cleanupExperiment(page, expId) {
+  if (!expId) return;
+  await page.request.delete(`/api/experiments/${expId}`).catch(() => {});
+}
+
 function parsePayload(raw) {
   if (!raw) return {};
   if (typeof raw === 'object') return raw;
@@ -274,20 +279,24 @@ test('五条典型链路能前端运行并写入 RECORD 内部事件', async ({ 
 
   for (const c of cases) {
     const expId = await createExperiment(page, `v113-${c.name}`);
-    const events = await runFlowFromBrowser(page, expId, c.graph);
-    const nodeEvents = events
-      .filter(e => e.event_type === 'node_executed')
-      .map(e => ({ ...e, payload: parsePayload(e.raw_payload) }));
-    const recordEvents = nodeEvents.filter(e => e.payload.type === 'record');
-    const triggerEvents = events.filter(e => e.event_type === 'node_triggered');
-    const snifferEvents = events.filter(e => e.event_type === 'sniffer_captured');
+    try {
+      const events = await runFlowFromBrowser(page, expId, c.graph);
+      const nodeEvents = events
+        .filter(e => e.event_type === 'node_executed')
+        .map(e => ({ ...e, payload: parsePayload(e.raw_payload) }));
+      const recordEvents = nodeEvents.filter(e => e.payload.type === 'record');
+      const triggerEvents = events.filter(e => e.event_type === 'node_triggered');
+      const snifferEvents = events.filter(e => e.event_type === 'sniffer_captured');
 
-    expect(recordEvents.length, `${c.name} RECORD count`).toBeGreaterThanOrEqual(c.minRecords);
-    if (c.needsTrigger) expect(triggerEvents.length, `${c.name} trigger count`).toBeGreaterThanOrEqual(1);
-    if (c.needsSniffer) expect(snifferEvents.length, `${c.name} sniffer count`).toBeGreaterThanOrEqual(1);
-    if (c.quota) {
-      expect(recordEvents.filter(e => e.node_id === 'record_feed').length).toBeGreaterThanOrEqual(3);
-      expect(recordEvents.some(e => e.node_id === 'start_cooldown')).toBeTruthy();
+      expect(recordEvents.length, `${c.name} RECORD count`).toBeGreaterThanOrEqual(c.minRecords);
+      if (c.needsTrigger) expect(triggerEvents.length, `${c.name} trigger count`).toBeGreaterThanOrEqual(1);
+      if (c.needsSniffer) expect(snifferEvents.length, `${c.name} sniffer count`).toBeGreaterThanOrEqual(1);
+      if (c.quota) {
+        expect(recordEvents.filter(e => e.node_id === 'record_feed').length).toBeGreaterThanOrEqual(3);
+        expect(recordEvents.some(e => e.node_id === 'start_cooldown')).toBeTruthy();
+      }
+    } finally {
+      await cleanupExperiment(page, expId);
     }
   }
 });

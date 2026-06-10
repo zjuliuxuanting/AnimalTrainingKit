@@ -213,12 +213,12 @@ function validateNodeParams(id) {
 
 document.addEventListener('mousemove', (e) => {
   if (dragState) {
-    const canvas = document.getElementById('flowCanvas');
-    const rect = canvas.getBoundingClientRect();
-    const x = Math.max(0, Math.min(rect.width - 140, e.clientX - rect.left - dragState.offsetX));
-    const y = Math.max(0, Math.min(rect.height - 60, e.clientY - rect.top - dragState.offsetY));
-    dragState.el.style.left = x + 'px';
-    dragState.el.style.top = y + 'px';
+    const rect = document.getElementById('flowCanvas').getBoundingClientRect();
+    placeNodeWithinCanvas(
+      dragState.el,
+      e.clientX - rect.left - dragState.offsetX,
+      e.clientY - rect.top - dragState.offsetY
+    );
     updateSvg();
   }
   if (connectingFrom) {
@@ -356,11 +356,10 @@ document.getElementById('nodePalette').addEventListener('mousedown', (e) => {
   const el = createNodeEl(type, label, defaults);
   el.id = 'node_' + id;
   const offsetX = (nodeCreationOffset % 5) * 20;
-  const offsetY = Math.floor(nodeCreationOffset / 5) * 20;
+  const offsetY = (Math.floor(nodeCreationOffset / 5) % 12) * 20;
   nodeCreationOffset++;
-  el.style.left = (200 + offsetX) + 'px';
-  el.style.top = (100 + offsetY) + 'px';
   document.getElementById('flowNodes').appendChild(el);
+  placeNodeWithinCanvas(el, 200 + offsetX, 100 + offsetY);
   flowNodes[id] = { el, type, label, params: defaults, fixed: false };
   makeDraggable(el, id);
   selectNode(id);

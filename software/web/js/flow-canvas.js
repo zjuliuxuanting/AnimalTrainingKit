@@ -179,6 +179,50 @@ function createNodeEl(type, label, params) {
 // Draggable nodes
 // ============================================================================
 
+const FLOW_NODE_WIDTH = 140;
+const FLOW_NODE_MIN_HEIGHT = 60;
+const FLOW_NODE_MARGIN = 8;
+
+function getCanvasSize() {
+  const canvas = document.getElementById('flowCanvas');
+  const rect = canvas?.getBoundingClientRect();
+  return {
+    width: rect?.width || 800,
+    height: rect?.height || 500,
+  };
+}
+
+function clampNodePosition(x, y, el = null) {
+  const size = getCanvasSize();
+  const nodeWidth = Math.max(FLOW_NODE_WIDTH, el?.offsetWidth || 0);
+  const nodeHeight = Math.max(FLOW_NODE_MIN_HEIGHT, el?.offsetHeight || 0);
+  const maxX = Math.max(FLOW_NODE_MARGIN, size.width - nodeWidth - FLOW_NODE_MARGIN);
+  const maxY = Math.max(FLOW_NODE_MARGIN, size.height - nodeHeight - FLOW_NODE_MARGIN);
+  return {
+    x: Math.max(FLOW_NODE_MARGIN, Math.min(maxX, Number.isFinite(x) ? x : FLOW_NODE_MARGIN)),
+    y: Math.max(FLOW_NODE_MARGIN, Math.min(maxY, Number.isFinite(y) ? y : FLOW_NODE_MARGIN)),
+  };
+}
+
+function placeNodeWithinCanvas(el, x, y) {
+  const pos = clampNodePosition(Number(x), Number(y), el);
+  el.style.left = pos.x + 'px';
+  el.style.top = pos.y + 'px';
+  return pos;
+}
+
+function clampAllFlowNodes() {
+  for (const node of Object.values(flowNodes)) {
+    if (!node?.el) continue;
+    placeNodeWithinCanvas(
+      node.el,
+      Number.parseFloat(node.el.style.left || '0'),
+      Number.parseFloat(node.el.style.top || '0')
+    );
+  }
+  updateSvg();
+}
+
 function makeDraggable(el, id) {
   let offsetX, offsetY;
   el.addEventListener('mousedown', (e) => {
@@ -316,11 +360,10 @@ function initFixedNodes() {
     const startEl = createNodeEl('start', '开始', {});
     startEl.id = 'node_start_0';
     startEl.setAttribute('data-fixed', 'true');
-    startEl.style.left = '16px';
-    startEl.style.top = '16px';
     startEl.style.opacity = '0.85';
     flowNodes['start_0'] = { el: startEl, type: 'start', label: '开始', params: {}, fixed: true };
     document.getElementById('flowNodes').appendChild(startEl);
+    placeNodeWithinCanvas(startEl, 16, 16);
   }
 
   // END node — fixed bottom-right (>=1 inputs, 0 outputs)
@@ -328,11 +371,10 @@ function initFixedNodes() {
     const endEl = createNodeEl('end', '结束', {});
     endEl.id = 'node_end_0';
     endEl.setAttribute('data-fixed', 'true');
-    endEl.style.left = (canvasW - 156) + 'px';
-    endEl.style.top = (canvasH - 76) + 'px';
     endEl.style.opacity = '0.85';
     flowNodes['end_0'] = { el: endEl, type: 'end', label: '结束', params: {}, fixed: true };
     document.getElementById('flowNodes').appendChild(endEl);
+    placeNodeWithinCanvas(endEl, canvasW - 156, canvasH - 76);
   }
 
   // Defense: force-correct fixed status on any START/END that arrived with fixed=false
