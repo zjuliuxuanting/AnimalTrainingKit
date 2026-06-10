@@ -213,11 +213,12 @@ function validateNodeParams(id) {
 
 document.addEventListener('mousemove', (e) => {
   if (dragState) {
-    const rect = document.getElementById('flowCanvas').getBoundingClientRect();
+    const canvas = document.getElementById('flowCanvas');
+    const rect = canvas.getBoundingClientRect();
     placeNodeWithinCanvas(
       dragState.el,
-      e.clientX - rect.left - dragState.offsetX,
-      e.clientY - rect.top - dragState.offsetY
+      e.clientX - rect.left + canvas.scrollLeft - dragState.offsetX,
+      e.clientY - rect.top + canvas.scrollTop - dragState.offsetY
     );
     updateSvg();
   }

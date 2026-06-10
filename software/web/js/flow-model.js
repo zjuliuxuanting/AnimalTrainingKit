@@ -492,13 +492,11 @@ function loadFlowData(data) {
       const isFixed = nd.node_type === 'start' || nd.node_type === 'end';
       if (nd.node_type === 'start') {
         document.getElementById('flowNodes').appendChild(n);
-        placeNodeWithinCanvas(n, 16, 16);
+        placeNodeWithinCanvas(n, Number(nd.x ?? 16), Number(nd.y ?? 16));
       } else if (nd.node_type === 'end') {
-        const rect = document.getElementById('flowCanvas')?.getBoundingClientRect();
-        const cw = rect?.width || 800;
-        const ch = rect?.height || 500;
+        const visible = getVisibleCanvasSize();
         document.getElementById('flowNodes').appendChild(n);
-        placeNodeWithinCanvas(n, cw - 156, ch - 76);
+        placeNodeWithinCanvas(n, Number(nd.x ?? (visible.width - 156)), Number(nd.y ?? (visible.height - 76)));
       } else {
         document.getElementById('flowNodes').appendChild(n);
         placeNodeWithinCanvas(n, Number(nd.x ?? 100), Number(nd.y ?? 100));

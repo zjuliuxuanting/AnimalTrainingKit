@@ -182,13 +182,29 @@ function createNodeEl(type, label, params) {
 const FLOW_NODE_WIDTH = 140;
 const FLOW_NODE_MIN_HEIGHT = 60;
 const FLOW_NODE_MARGIN = 8;
+const FLOW_WORKSPACE_MIN_WIDTH = 2200;
+const FLOW_WORKSPACE_MIN_HEIGHT = 760;
 
-function getCanvasSize() {
+function getVisibleCanvasSize() {
   const canvas = document.getElementById('flowCanvas');
   const rect = canvas?.getBoundingClientRect();
   return {
     width: rect?.width || 800,
     height: rect?.height || 500,
+  };
+}
+
+function getFlowWorkspace() {
+  return document.getElementById('flowWorkspace') || document.getElementById('flowCanvas');
+}
+
+function getCanvasSize() {
+  const canvas = document.getElementById('flowCanvas');
+  const workspace = getFlowWorkspace();
+  const rect = workspace?.getBoundingClientRect();
+  return {
+    width: Math.max(FLOW_WORKSPACE_MIN_WIDTH, workspace?.scrollWidth || 0, rect?.width || 0, canvas?.clientWidth || 0, 800),
+    height: Math.max(FLOW_WORKSPACE_MIN_HEIGHT, workspace?.scrollHeight || 0, rect?.height || 0, canvas?.clientHeight || 0, 500),
   };
 }
 
@@ -329,8 +345,9 @@ function updateConnectingLine(rect) {
   if (!srcNode || !connectingMousePos) return;
   const sx = parseInt(srcNode.el.style.left) + 140;
   const sy = parseInt(srcNode.el.style.top) + 30;
-  const tx = connectingMousePos.x - rect.left;
-  const ty = connectingMousePos.y - rect.top;
+  const canvas = document.getElementById('flowCanvas');
+  const tx = connectingMousePos.x - rect.left + (canvas?.scrollLeft || 0);
+  const ty = connectingMousePos.y - rect.top + (canvas?.scrollTop || 0);
   const midX = (sx + tx) / 2;
   line.setAttribute('d', `M${sx},${sy} C${midX},${sy} ${midX},${ty} ${tx},${ty}`);
 }
@@ -374,7 +391,8 @@ function initFixedNodes() {
     endEl.style.opacity = '0.85';
     flowNodes['end_0'] = { el: endEl, type: 'end', label: '结束', params: {}, fixed: true };
     document.getElementById('flowNodes').appendChild(endEl);
-    placeNodeWithinCanvas(endEl, canvasW - 156, canvasH - 76);
+    const visible = getVisibleCanvasSize();
+    placeNodeWithinCanvas(endEl, visible.width - 156, visible.height - 76);
   }
 
   // Defense: force-correct fixed status on any START/END that arrived with fixed=false
