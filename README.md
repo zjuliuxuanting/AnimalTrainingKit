@@ -4,7 +4,7 @@
 
 ## 当前版本
 
-**v1.1.0** — G3 流程编辑器深度修复完成，待创始人验收。G1/G1.5/G2 已关门。
+**v1.1.3** — 五条典型链路门禁通过；第 5 条“每日定额投喂 / 可持久斯金纳箱”最小可验版已完成。CSV / 导出 / 图表仍归 G4。
 
 ## 技术栈
 
@@ -26,6 +26,14 @@ python3 server.py --port 8000
 ```
 
 或 `./scripts/manage.sh start`
+
+## 版本产物归属
+
+Git 版本库应只保存源码、测试、必要脚本和少量对外同步文档。
+
+- 应进入版本库：`software/` 下源码与测试、`software/e2e/`、`scripts/` 里的运维脚本、根目录 `package.json` / `playwright.config.js`、`AGENTS.md`
+- 本地运行产物：`software/data_store/`、`.playwright-mcp/`、`node_modules/`、`playwright-report/`、`test-results/`
+- 若想快速看懂当前工作区为什么变脏，可运行 `./scripts/audit_worktree.sh`
 
 ## 项目结构
 

@@ -520,9 +520,10 @@ async def api_run_flow(data: dict):
                 await b.start_all()
                 await e.start(s)
                 start_ts = time.time()
-                while time.time() - start_ts < duration_s:
+                while time.time() - start_ts < duration_s and e.is_running:
                     await asyncio.sleep(0.1)
-                await e.stop()
+                if e.is_running:
+                    await e.stop()
                 await b.stop_all()
                 await asyncio.sleep(0.1)
                 event_store.update_session_state(s.id, s.state.value)

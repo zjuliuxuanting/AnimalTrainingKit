@@ -1,6 +1,6 @@
 # 行为学训练盒 — 上位机软件
 
-> 2026-06-05 创建，版本 v1.1.0（G3-FLOWFIX 深度修复后）
+> 2026-06-10 更新，版本 v1.1.3（第5链路最小持久状态能力后）
 
 ## 产品定位
 
@@ -46,6 +46,7 @@ software/
 ├── data/                  # 数据层 — 持久化 + 查询 + 导出
 │   ├── database.py        #   SQLite 连接管理 (WAL, busy_timeout)
 │   ├── event_store.py     #   事件增删改查
+│   ├── quota_state.py     #   第5链路最小持久状态（投喂额度/冷却）
 │   ├── experiment_manager.py  # 实验文件夹管理 (自包含)
 │   ├── export.py          #   CSV 导出
 │   └── processor.py       #   数据处理
@@ -143,6 +144,13 @@ software/
 - 写操作必须 commit()
 - `raw_payload` 读后需检查类型（可能是 str 或 dict）
 
+### 第5链路持久状态
+- 本轮只按投喂次数/颗数计量，不按克数；硬件负责单次出粮请求对应的实际食物量
+- 不新增通用 FLAG 节点
+- `RECORD` 是持久状态写入口，`CONDITION` 读取持久状态
+- 最小落盘字段：`feeds_today`、`daily_quota_count`、`quota_locked`、`cooldown_until`、`day_index`
+- 当前实现是“配额周期”最小能力；自然日切换、CSV、导出、图表归后续 G4/G5，不纳入 Sprint v1.1.3 门禁
+
 ### XSS 防护
 - 所有用户输入的字符串插入 innerHTML 前必须 `escapeHtml()`
 - `escapeHtml()` 在 `app.js` 定义，后续 JS 文件全局可用
@@ -156,14 +164,19 @@ software/
 | test_experiment_manager.py | 9 | ✅ |
 | test_export.py | 8 | ✅ |
 | test_flow_schema.py | 51 | ✅ |
+| test_quota_state.py | 4 | ✅ |
 | test_zone_state_machine.py | 10 | ✅ |
 | test_bug_regression.py | 24 | ✅ |
 | test_validator_loop.py | 7 | ✅ |
 | test_device_registry.py | 20 | ✅ |
-| 5 ad-hoc bug tests | 5 | ⚠️ need live server |
-| **合计** | **161** | **158 pass** |
+| 5 ad-hoc bug tests | 5 | ✅ live server |
+| Playwright 第5链路专测 | 2 | ✅ |
+| Playwright 五链路门禁 | 1 | ✅ |
+| **本轮相关** | **74 pytest + 3 Playwright + 5 live-server** | **✅ 全过** |
 
 运行：`cd software && python3 -m pytest tests/ -v`
+
+> 注：全量 pytest 当前仍受旧 `TestClient/httpx` 兼容问题影响，不能把该环境问题等同于第5链路门禁失败。
 
 ## 启动
 

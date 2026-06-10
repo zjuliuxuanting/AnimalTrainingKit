@@ -39,35 +39,41 @@ software/data_store/behavior_box.db-wal
 software/data_store/*.csv
 software/data_store/camera_config.json
 software/data_store/experiments/
+/software/node_modules/
+/software/playwright-report/
+/software/test-results/
+/software/package.json
+/software/package-lock.json
+/software/playwright.config.js
 
 # Syncthing
 .stignore
 
 # Archive
-_存档/
+/_存档/
 
-# Node (Python project, node only for Playwright)
-node_modules/
-package.json
-package-lock.json
-playwright.config.js
-.playwright-mcp/
-skills-lock.json
+# Node / Playwright runtime
+/node_modules/
+/.playwright-mcp/
+/playwright-report/
+/test-results/
 
-# Project docs (not part of software repo)
-manage.sh
-角色/
-项目/
-AGENTS.md
-LICENSE
-docs/
+# Project docs (version selected files only)
+/角色/
+/项目/*
+!/项目/07_会议与沟通/
+/项目/07_会议与沟通/*
+!/项目/07_会议与沟通/测试报告.md
+!/项目/07_会议与沟通/软件进展报告.md
+/docs/
 
 # Project
-.project_index*
+/project_index*
+/e2e/
 e2e/test-results/
 e2e/playwright-report/
 .agents/skills/local/
-.project_index.json
+/project_index.json
 
 # OS
 Thumbs.db

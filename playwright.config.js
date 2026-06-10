@@ -5,7 +5,7 @@ const { defineConfig, devices } = require('@playwright/test');
  * @see https://playwright.dev/docs/test-configuration
  */
 module.exports = defineConfig({
-  testDir: './e2e',
+  testDir: './software/e2e',
   /* 测试文件匹配模式 */
   testMatch: '*.spec.js',
   /* 超时时间 */
