@@ -9,6 +9,7 @@
 .vscode/
 .workbuddy/
 .codex/
+.Codex/
 
 # Python
 __pycache__/
@@ -33,12 +34,7 @@ software/data/*.csv
 software/data/*.json
 !software/data/__init__.py
 
-software/data_store/behavior_box.db
-software/data_store/behavior_box.db-shm
-software/data_store/behavior_box.db-wal
-software/data_store/*.csv
-software/data_store/camera_config.json
-software/data_store/experiments/
+/software/data_store/
 /software/node_modules/
 /software/playwright-report/
 /software/test-results/
@@ -60,11 +56,7 @@ software/data_store/experiments/
 
 # Project docs (version selected files only)
 /角色/
-/项目/*
-!/项目/07_会议与沟通/
-/项目/07_会议与沟通/*
-!/项目/07_会议与沟通/测试报告.md
-!/项目/07_会议与沟通/软件进展报告.md
+/项目/
 /docs/
 
 # Project
@@ -74,6 +66,14 @@ e2e/test-results/
 e2e/playwright-report/
 .agents/skills/local/
 /project_index.json
+
+# Local-only management assets
+/.agents/
+/.mcp.json
+/AGENTS.md
+/CLAUDE.md
+/software/project-dashboard.html
+/software/web/project-dashboard.html
 
 # OS
 Thumbs.db
