@@ -81,8 +81,9 @@ async function openExperimentEditor(page, expId) {
 
 async function boundaryViolations(page) {
   return page.evaluate(() => {
-    const canvas = document.getElementById('flowCanvas');
-    const bounds = canvas.getBoundingClientRect();
+    const workspace = document.getElementById('flowWorkspace') || document.getElementById('flowCanvas');
+    const workspaceWidth = workspace.scrollWidth || workspace.getBoundingClientRect().width;
+    const workspaceHeight = workspace.scrollHeight || workspace.getBoundingClientRect().height;
     return Array.from(document.querySelectorAll('#flowNodes .flow-node'))
       .map((el) => {
         const left = Number.parseFloat(el.style.left || '0');
@@ -95,13 +96,19 @@ async function boundaryViolations(page) {
           top,
           right,
           bottom,
-          canvasWidth: bounds.width,
-          canvasHeight: bounds.height,
-          outside: left < 0 || top < 0 || right > bounds.width + 0.5 || bottom > bounds.height + 0.5,
+          workspaceWidth,
+          workspaceHeight,
+          outside: left < 0 || top < 0 || right > workspaceWidth + 0.5 || bottom > workspaceHeight + 0.5,
         };
       })
       .filter((node) => node.outside);
   });
+}
+
+async function startNodeCount(page) {
+  return page.evaluate(() => Array.from(document.querySelectorAll('#flowNodes .flow-node'))
+    .filter((el) => el.querySelector('.node-body')?.textContent?.trim() === 'start')
+    .length);
 }
 
 test('加载、新建、拖拽后的节点都不能越出流程画布', async ({ page }) => {
@@ -115,12 +122,14 @@ test('加载、新建、拖拽后的节点都不能越出流程画布', async ({
 
     await openExperimentEditor(page, expId);
     await expect.poll(() => boundaryViolations(page), { timeout: 5_000 }).toEqual([]);
+    await expect.poll(() => startNodeCount(page), { timeout: 5_000 }).toBe(1);
 
     const recordPaletteItem = page.locator('.palette-item[data-type="record"]');
     for (let i = 0; i < 110; i += 1) {
       await recordPaletteItem.click();
     }
     expect(await boundaryViolations(page)).toEqual([]);
+    expect(await startNodeCount(page)).toBe(1);
 
     const conditionPaletteItem = page.locator('.palette-item[data-type="condition"]');
     await conditionPaletteItem.click();
@@ -136,6 +145,7 @@ test('加载、新建、拖拽后的节点都不能越出流程画布', async ({
     await page.mouse.up();
 
     expect(await boundaryViolations(page)).toEqual([]);
+    expect(await startNodeCount(page)).toBe(1);
   } finally {
     await cleanupExperiment(page, expId);
   }
