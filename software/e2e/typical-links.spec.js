@@ -239,6 +239,12 @@ function parsePayload(raw) {
   }
 }
 
+async function startNodeCount(page) {
+  return page.evaluate(() => Array.from(document.querySelectorAll('#flowNodes .flow-node'))
+    .filter((el) => el.querySelector('.node-body')?.textContent?.trim() === 'start')
+    .length);
+}
+
 async function waitForDone(page, sessionId, timeoutMs = 70_000) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -261,6 +267,7 @@ async function runFlowFromBrowser(page, expId, flowData) {
   await expect(page.getByText(exp.name)).toBeVisible();
   await page.locator('tr').filter({ hasText: exp.name }).getByRole('button', { name: /编辑/ }).click();
   await expect(page.locator('#tab-flow')).toBeVisible();
+  await expect.poll(() => startNodeCount(page), { timeout: 5_000 }).toBe(1);
   await page.getByRole('button', { name: /运行流程/ }).click();
   await expect(page.locator('#tab-monitor')).toBeVisible();
   const state = await api(page, '/api/experiment/state');
