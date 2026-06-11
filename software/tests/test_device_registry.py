@@ -245,15 +245,19 @@ class TestCameraConfigLoading:
 class TestBuiltinSources:
     """内置信号源和执行器"""
 
-    def test_builtin_mock_timer(self):
+    def test_builtin_user_sources_hide_mock_timer_and_expose_manual_trigger(self):
         reg = DeviceRegistry()
         reg.register_builtin()
         sources = reg.get_all_sources()
         source_ids = {s.source_id for s in sources}
-        assert "mock:default" in source_ids
-        assert "timer:system" in source_ids
-        mock = reg.get("mock:default")
-        assert "mock:trigger" in mock.produced_signals
+        assert "mock:default" not in source_ids
+        assert "timer:system" not in source_ids
+
+        manual = reg.get("manual:trigger")
+        assert manual is not None
+        assert manual.display_name == "手动触发"
+        assert manual.source_type == "manual"
+        assert manual.produced_signals == ["manual:trigger"]
 
     def test_builtin_actuators(self):
         reg = DeviceRegistry()

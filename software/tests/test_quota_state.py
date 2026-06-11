@@ -1,4 +1,4 @@
-"""Sprint v1.1.3: daily quota persistent state tests."""
+"""Generic variable model regression for the daily quota flow."""
 
 import asyncio
 import time
@@ -20,118 +20,141 @@ def _edge(src, sport, dst):
     )
 
 
-def test_quota_state_persists_and_unlocks_after_cooldown(tmp_path):
-    """Quota state survives db reopen and resets after cooldown expires."""
-    from data.database import Database
-    from data.quota_state import QuotaStateStore
-
-    db_path = str(tmp_path / "quota.db")
-    db = Database(db_path)
-    db.open()
-    store = QuotaStateStore(db)
-
-    for _ in range(3):
-        store.apply_record_op("exp-a", "feed_success", daily_quota_count=3)
-    locked = store.apply_record_op(
-        "exp-a",
-        "start_cooldown",
-        daily_quota_count=3,
-        cooldown_s=0.2,
-    )
-    assert locked["feeds_today"] == 3
-    assert locked["daily_quota_count"] == 3
-    assert locked["quota_locked"] is True
-    assert locked["cooldown_until"] > time.time()
-    db.close()
-
-    reopened = Database(db_path)
-    reopened.open()
-    reopened_store = QuotaStateStore(reopened)
-    still_locked = reopened_store.get_state("exp-a")
-    assert still_locked["feeds_today"] == 3
-    assert still_locked["quota_locked"] is True
-
-    time.sleep(0.25)
-    unlocked = reopened_store.get_state("exp-a")
-    assert unlocked["feeds_today"] == 0
-    assert unlocked["quota_locked"] is False
-    assert unlocked["cooldown_until"] == 0
-    assert unlocked["day_index"] == 2
-    reopened.close()
-
-
-def test_engine_record_writes_quota_and_condition_blocks_fourth_feed(tmp_path):
-    """RECORD writes quota state; CONDITION reads it and prevents extra food."""
-    from data.database import Database
-    from data.quota_state import QuotaStateStore
-    from protocol.signal_source import SignalEvent, SourceType
-    from session.engine import Engine
+def _daily_quota_graph(loop_iterations=12, cooldown_value=0):
     from session.flow_model import FlowGraph
-    from session.session import ExperimentConfig, Session
 
-    db = Database(str(tmp_path / "quota_engine.db"))
-    db.open()
-    quota_store = QuotaStateStore(db)
-
-    graph = FlowGraph(id="quota-flow", name="daily-quota")
+    graph = FlowGraph(id="generic-daily-quota", name="daily-quota")
     for node in [
         _node("start", "start"),
-        _node("quota_available", "condition", {
-            "source": "quota_available", "operator": "eq", "value": 1,
-            "daily_quota_count": 3,
+        _node("set_quota", "record", {
+            "event_name": "设置日定额",
+            "variable_name": "daily_quota_count",
+            "variable_op": "set",
+            "variable_value": 3,
+            "variable_persistent": True,
+        }),
+        _node("entry_merge", "record", {"event_name": "入口汇合"}),
+        _node("locked", "condition", {
+            "source": "variable",
+            "variable_name": "quota_locked",
+            "operator": "eq",
+            "value": 1,
+        }),
+        _node("quota_left", "condition", {
+            "source": "variable",
+            "variable_name": "feeds_today",
+            "operator": "lt",
+            "compare_source": "variable",
+            "compare_variable_name": "daily_quota_count",
         }),
         _node("lever", "trigger", {"signal_id": "mock:default"}),
         _node("feed", "execute", {"actuator_id": "actuator:feeder", "action": "high"}),
         _node("record_feed", "record", {
             "event_name": "投喂成功",
-            "state_op": "feed_success",
-            "daily_quota_count": 3,
+            "variable_name": "feeds_today",
+            "variable_op": "add",
+            "variable_value": 1,
+            "variable_persistent": True,
         }),
         _node("quota_reached", "condition", {
-            "source": "quota_reached", "operator": "eq", "value": 1,
-            "daily_quota_count": 3,
+            "source": "variable",
+            "variable_name": "feeds_today",
+            "operator": "gte",
+            "compare_source": "variable",
+            "compare_variable_name": "daily_quota_count",
         }),
         _node("record_continue", "record", {"event_name": "继续等待"}),
-        _node("record_cooldown", "record", {
+        _node("lock_quota", "record", {
             "event_name": "开始冷却",
-            "state_op": "start_cooldown",
-            "daily_quota_count": 3,
-            "cooldown_s": 20,
+            "variable_name": "quota_locked",
+            "variable_op": "set",
+            "variable_value": 1,
+            "variable_persistent": True,
         }),
-        _node("merge", "record", {"event_name": "配额检查完成"}),
-        _node("loop", "loop", {"max_iterations": 10, "timeout_s": 30}),
+        _node("cooldown_delay", "delay", {
+            "duration_value": cooldown_value,
+            "duration_unit": "seconds",
+        }),
+        _node("reset_feeds", "record", {
+            "event_name": "重置投喂数",
+            "variable_name": "feeds_today",
+            "variable_op": "set",
+            "variable_value": 0,
+            "variable_persistent": True,
+        }),
+        _node("unlock_quota", "record", {
+            "event_name": "解除冷却",
+            "variable_name": "quota_locked",
+            "variable_op": "set",
+            "variable_value": 0,
+            "variable_persistent": True,
+        }),
+        _node("inc_day", "record", {
+            "event_name": "新压缩日",
+            "variable_name": "day_index",
+            "variable_op": "add",
+            "variable_value": 1,
+            "variable_persistent": True,
+        }),
+        _node("merge", "record", {"event_name": "循环汇合"}),
+        _node("loop", "loop", {"max_iterations": loop_iterations, "timeout_s": 60}),
         _node("end", "end"),
     ]:
         graph.add_node(node)
 
     for edge in [
-        _edge("start", "out", "quota_available"),
-        _edge("quota_available", "true", "lever"),
-        _edge("quota_available", "false", "end"),
+        _edge("start", "out", "set_quota"),
+        _edge("set_quota", "out", "entry_merge"),
+        _edge("entry_merge", "out", "locked"),
+        _edge("locked", "true", "cooldown_delay"),
+        _edge("locked", "false", "quota_left"),
+        _edge("quota_left", "true", "lever"),
+        _edge("quota_left", "false", "lock_quota"),
         _edge("lever", "out", "feed"),
         _edge("feed", "out", "record_feed"),
         _edge("record_feed", "out", "quota_reached"),
+        _edge("quota_reached", "true", "lock_quota"),
         _edge("quota_reached", "false", "record_continue"),
-        _edge("quota_reached", "true", "record_cooldown"),
         _edge("record_continue", "out", "merge"),
-        _edge("record_cooldown", "out", "merge"),
+        _edge("lock_quota", "out", "merge"),
+        _edge("cooldown_delay", "out", "reset_feeds"),
+        _edge("reset_feeds", "out", "unlock_quota"),
+        _edge("unlock_quota", "out", "inc_day"),
+        _edge("inc_day", "out", "merge"),
         _edge("merge", "out", "loop"),
-        _edge("loop", "body", "quota_available"),
+        _edge("loop", "body", "entry_merge"),
         _edge("loop", "exit", "end"),
     ]:
         graph.add_edge(edge)
+    return graph
+
+
+def test_daily_quota_flow_uses_generic_variables_and_blocks_fourth_feed(tmp_path):
+    from data.database import Database
+    from data.variable_state import VariableStateStore
+    from protocol.signal_source import SignalEvent, SourceType
+    from session.engine import Engine
+    from session.session import ExperimentConfig, Session
+
+    db = Database(str(tmp_path / "daily_quota_variables.db"))
+    db.open()
+    variable_store = VariableStateStore(db)
 
     actions = []
     engine_events = []
 
+    async def _capture_action(cmd):
+        actions.append(cmd)
+        return True
+
     async def run_test():
         engine = Engine()
-        engine.set_quota_state_store(quota_store, "exp-a")
-        engine.set_send_action(lambda cmd: _capture_action(cmd, actions))
+        engine.set_variable_state_store(variable_store, "exp-a")
+        engine.set_send_action(_capture_action)
         engine.set_on_engine_event(lambda kind, data: engine_events.append((kind, data)))
 
         session = Session()
-        session.load(ExperimentConfig(name="quota-test", flow=graph))
+        session.load(ExperimentConfig(name="daily-quota-test", flow=_daily_quota_graph(loop_iterations=5, cooldown_value=20)))
         await engine.start(session)
         await asyncio.sleep(0.05)
 
@@ -145,97 +168,105 @@ def test_engine_record_writes_quota_and_condition_blocks_fourth_feed(tmp_path):
                 data={},
             )
             await engine.feed_signal(signal)
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.08)
 
         await engine.stop()
 
-    async def _capture_action(cmd, bucket):
-        bucket.append(cmd)
-        return True
-
     asyncio.run(run_test())
 
-    state = quota_store.get_state("exp-a")
     assert len(actions) == 3
-    assert state["feeds_today"] == 3
-    assert state["daily_quota_count"] == 3
-    assert state["quota_locked"] is True
-    assert state["cooldown_until"] > time.time()
+    assert variable_store.get_value("exp-a", "daily_quota_count") == 3
+    assert variable_store.get_value("exp-a", "feeds_today") == 3
+    assert variable_store.get_value("exp-a", "quota_locked") == 1
 
     record_events = [
         data for kind, data in engine_events
         if kind == "node_executed" and data.get("type") == "record"
     ]
-    assert len(record_events) >= 3
-    assert any(e.get("quota_state", {}).get("feeds_today") == 3 for e in record_events)
-    assert any(data.get("node_id") == "quota_reached" for kind, data in engine_events)
+    condition_events = [
+        data for kind, data in engine_events
+        if kind == "node_executed" and data.get("type") == "condition"
+    ]
+    assert sum(1 for event in record_events if event.get("node_id") == "record_feed") == 3
+    assert any(event.get("node_id") == "lock_quota" and event.get("variable_result") == 1 for event in record_events)
+    assert any(event.get("node_id") == "quota_reached" and event.get("result") is True for event in condition_events)
 
     db.close()
 
 
-def test_new_day_reset_is_idempotent_after_auto_unlock(tmp_path):
-    """Explicit reset after expired cooldown must not skip a day index."""
+def test_execute_event_includes_user_friendly_actuator_label():
+    from session.engine import actuator_display_name
+
+    assert actuator_display_name("actuator:light") == "灯光"
+    assert actuator_display_name("actuator:feeder") == "给食器（出粮器）"
+    assert actuator_display_name("custom:port1") == "custom:port1"
+
+
+def test_daily_quota_cooldown_cycle_resets_with_delay_and_day_index(tmp_path):
     from data.database import Database
-    from data.quota_state import QuotaStateStore
+    from data.variable_state import VariableStateStore
+    from protocol.signal_source import SignalEvent, SourceType
+    from session.engine import Engine
+    from session.session import ExperimentConfig, Session
 
-    db = Database(str(tmp_path / "quota_reset.db"))
+    db = Database(str(tmp_path / "daily_quota_cooldown.db"))
     db.open()
-    store = QuotaStateStore(db)
+    variable_store = VariableStateStore(db)
 
-    store.apply_record_op("exp-a", "feed_success", daily_quota_count=3, now=100.0)
-    store.apply_record_op("exp-a", "start_cooldown", daily_quota_count=3, cooldown_s=10, now=101.0)
-    auto_unlocked = store.get_state("exp-a", daily_quota_count=3, now=112.0)
-    assert auto_unlocked["day_index"] == 2
+    actions = []
 
-    reset_again = store.apply_record_op("exp-a", "new_day_reset", daily_quota_count=3, now=113.0)
-    assert reset_again["feeds_today"] == 0
-    assert reset_again["quota_locked"] is False
-    assert reset_again["day_index"] == 2
+    async def _capture_action(cmd):
+        actions.append(cmd)
+        return True
+
+    async def run_test():
+        engine = Engine()
+        engine.set_variable_state_store(variable_store, "exp-a")
+        engine.set_send_action(_capture_action)
+
+        session = Session()
+        session.load(ExperimentConfig(name="daily-quota-reset", flow=_daily_quota_graph(loop_iterations=12, cooldown_value=0)))
+        await engine.start(session)
+        await asyncio.sleep(0.05)
+
+        for _ in range(8):
+            signal = SignalEvent(
+                source_id="mock:0",
+                source_type=SourceType.MOCK,
+                signal_id="mock:default",
+                ts_ms=int(time.time() * 1000),
+                value=1,
+                data={},
+            )
+            await engine.feed_signal(signal)
+            await asyncio.sleep(0.08)
+
+        await engine.stop()
+
+    asyncio.run(run_test())
+
+    assert len(actions) >= 6
+    assert variable_store.get_value("exp-a", "daily_quota_count") == 3
+    assert variable_store.get_value("exp-a", "feeds_today") <= 3
+    assert variable_store.get_value("exp-a", "quota_locked") in (0, 1)
+    assert variable_store.get_value("exp-a", "day_index") >= 1
 
     db.close()
 
 
-def test_validator_accepts_quota_sources_and_rejects_bad_state_op():
-    from session.flow_model import FlowGraph
+def test_validator_rejects_quota_special_fields_and_accepts_generic_daily_quota():
     from session.validator import validate_flow
 
-    graph = FlowGraph(id="quota-validate", name="quota-validate")
-    for node in [
-        _node("start", "start"),
-        _node("quota_available", "condition", {
-            "source": "quota_available",
-            "operator": "eq",
-            "value": 1,
-            "daily_quota_count": 3,
-        }),
-        _node("trigger", "trigger", {"signal_id": "mock:default"}),
-        _node("record_feed", "record", {
-            "event_name": "投喂成功",
-            "state_op": "feed_success",
-            "daily_quota_count": 3,
-        }),
-        _node("end", "end"),
-    ]:
-        graph.add_node(node)
-    for edge in [
-        _edge("start", "out", "quota_available"),
-        _edge("quota_available", "true", "trigger"),
-        _edge("quota_available", "false", "end"),
-        _edge("trigger", "out", "record_feed"),
-        _edge("record_feed", "out", "end"),
-    ]:
-        graph.add_edge(edge)
-
-    ok = validate_flow(graph, available_signals=["mock:default"])
+    ok = validate_flow(_daily_quota_graph(), available_signals=["mock:default"])
     assert ok.valid, ok.errors
 
-    graph.nodes["record_feed"].params["state_op"] = "bad_op"
+    graph = _daily_quota_graph()
+    graph.nodes["record_feed"].params = {
+        "event_name": "旧投喂",
+        "state_op": "feed_success",
+        "daily_quota_count": 3,
+        "cooldown_s": 20,
+    }
     bad = validate_flow(graph, available_signals=["mock:default"])
     assert not bad.valid
-    assert any("state_op" in err for err in bad.errors)
-
-    graph.nodes["record_feed"].params["state_op"] = "feed_success"
-    graph.nodes["record_feed"].params["counter_op"] = "inc"
-    bad_counter = validate_flow(graph, available_signals=["mock:default"])
-    assert not bad_counter.valid
-    assert any("counter_op" in err for err in bad_counter.errors)
+    assert any("state_op" in err or "daily_quota_count" in err or "cooldown_s" in err for err in bad.errors)

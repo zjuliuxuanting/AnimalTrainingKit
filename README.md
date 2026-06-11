@@ -4,7 +4,7 @@
 
 ## 当前版本
 
-**v1.1.3** — 五条典型链路门禁通过；第 5 条“每日定额投喂 / 可持久斯金纳箱”最小可验版已完成。CSV / 导出 / 图表仍归 G4。
+**v1.1.5-dev** — G3 关门前收尾：摄像头/手动触发驱动流程、用户主路径信号口收缩、实时日志面向实验人员。CSV / 导出 / 图表仍归 G4。
 
 ## 技术栈
 
@@ -31,9 +31,23 @@ python3 server.py --port 8000
 
 Git 版本库应只保存源码、测试、必要脚本和少量对外同步文档。
 
-- 应进入版本库：`software/` 下源码与测试、`software/e2e/`、`scripts/` 里的运维脚本、根目录 `package.json` / `playwright.config.js`、`AGENTS.md`
+- 应进入版本库：`software/` 下源码与测试、`software/e2e/`、`scripts/` 里的运维脚本、根目录 `package.json` / `playwright.config.js`
 - 本地运行产物：`software/data_store/`、`.playwright-mcp/`、`node_modules/`、`playwright-report/`、`test-results/`
+- 本地协作配置：`.agents/`、`.claude/`、`.codex/`、`.trae/`、`.workbuddy/`、`.vscode/`、`.mcp.json`。这些目录用于 AI/IDE/协作环境，默认不挪动、不提交。
 - 若想快速看懂当前工作区为什么变脏，可运行 `./scripts/audit_worktree.sh`
+
+## 根目录地图
+
+| 路径 | 归属 | 处理规则 |
+|------|------|----------|
+| `software/` | 上位机软件源码、测试、前端资源 | 主要开发目录 |
+| `scripts/` | 服务管理、工作区审计等脚本 | 可提交 |
+| `项目/` | PM、测试、验收、交接文档 | 当前协作真相面，按任务更新 |
+| `角色/` | AI 角色记忆与交接材料 | 按角色流程更新 |
+| `.agents/` | 项目技能与 agent 配置 | 本地协作能力，保持原位 |
+| `.claude/` `.codex/` `.trae/` `.workbuddy/` `.vscode/` | 本地 AI/IDE 配置 | 不作为软件交付物整理 |
+| `.playwright-mcp/` | 浏览器测试运行缓存 | 可清理，不作为源码 |
+| `_存档/` | 历史资料归档 | 不默认删除 |
 
 ## 项目结构
 

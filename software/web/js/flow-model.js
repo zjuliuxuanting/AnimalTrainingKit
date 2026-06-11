@@ -57,18 +57,30 @@ const NODE_SCHEMAS = {
     icon: '⏱',
     fields: [
       {
-        key: 'duration_s',
-        label: '等待时间',
+        key: 'duration_value',
+        label: '等待数值',
         type: 'number',
-        min: 0.1,
-        max: 3600,
-        step: 0.1,
+        min: 0,
+        max: 1000,
+        step: 1,
         default: 1,
-        unit: '秒',
+        integer: true,
+        required: true,
+      },
+      {
+        key: 'duration_unit',
+        label: '时间单位',
+        type: 'select',
+        options: [
+          { value: 'seconds', label: '秒' },
+          { value: 'minutes', label: '分钟' },
+          { value: 'hours', label: '小时' },
+        ],
+        default: 'seconds',
         required: true,
       },
     ],
-    help: '流程执行到此节点时暂停指定时长。默认 1 秒，范围 0.1 秒 ~ 1 小时。',
+    help: '流程执行到此节点时暂停指定时长。按整数数值 + 秒/分钟/小时配置。',
     ports: { inputs: -1, outputs: 1 },
   },
   condition: {
@@ -82,17 +94,18 @@ const NODE_SCHEMAS = {
         type: 'select',
         options: [
           { value: 'trigger_count', label: 'TRIGGER 累计计数' },
-          { value: 'counter', label: '指定计数器' },
-          { value: 'feeds_today', label: '今日已投喂次数' },
-          { value: 'daily_quota_count', label: '每日投喂上限' },
-          { value: 'quota_locked', label: '额度冷却锁定中' },
-          { value: 'quota_available', label: '今日额度仍可用' },
-          { value: 'quota_reached', label: '今日额度已达上限' },
-          { value: 'cooldown_remaining_s', label: '剩余冷却秒数' },
-          { value: 'day_index', label: '压缩日序号' },
+          { value: 'variable', label: '变量' },
         ],
         default: 'trigger_count',
         required: true,
+      },
+      {
+        key: 'variable_name',
+        label: '变量名称',
+        type: 'text',
+        maxLength: 64,
+        required: false,
+        condition: (params) => params.source === 'variable',
       },
       {
         key: 'operator',
@@ -113,24 +126,34 @@ const NODE_SCHEMAS = {
         key: 'value',
         label: '判断值',
         type: 'number',
-        min: 0,
+        min: -999999,
         max: 999999,
         default: 0,
+        integer: true,
         required: true,
+        condition: (params) => params.compare_source !== 'variable',
       },
       {
-        key: 'daily_quota_count',
-        label: '每日投喂上限',
-        type: 'number',
-        min: 1,
-        max: 10000,
-        step: 1,
-        default: 3,
-        unit: '次/颗',
+        key: 'compare_source',
+        label: '比较对象',
+        type: 'select',
+        options: [
+          { value: 'value', label: '固定数值' },
+          { value: 'variable', label: '变量' },
+        ],
+        default: 'value',
         required: false,
       },
+      {
+        key: 'compare_variable_name',
+        label: '比较变量名称',
+        type: 'text',
+        maxLength: 64,
+        required: false,
+        condition: (params) => params.compare_source === 'variable',
+      },
     ],
-    help: '根据上游数据做条件判断。source 可读取 TRIGGER 累计数、计数器或第5链路持久额度状态。',
+    help: '根据上游数据做条件判断。可读取运行时变量和持久变量。',
     ports: { inputs: 1, outputs: 2, outputLabels: ['真', '假'], outputPorts: ['true', 'false'] },
   },
   // --- EXECUTE group (green) ---
@@ -247,62 +270,44 @@ const NODE_SCHEMAS = {
         required: true,
       },
       {
-        key: 'counter_name',
-        label: '计数器名称',
+        key: 'variable_name',
+        label: '变量名称',
         type: 'text',
         maxLength: 64,
         required: false,
       },
       {
-        key: 'counter_op',
-        label: '计数器操作',
+        key: 'variable_op',
+        label: '变量操作',
         type: 'select',
         options: [
-          { value: '+1', label: '+1（递增）' },
-          { value: '=0', label: '=0（重置为零）' },
-          { value: '=1', label: '=1（重置为一）' },
-          { value: '-1', label: '-1（递减）' },
+          { value: 'add', label: '加' },
+          { value: 'subtract', label: '减' },
+          { value: 'set', label: '设为' },
         ],
-        default: '+1',
+        default: 'add',
         required: false,
       },
       {
-        key: 'state_op',
-        label: '持久额度写入',
-        type: 'select',
-        options: [
-          { value: '', label: '不写持久状态' },
-          { value: 'feed_success', label: '投喂成功：feeds_today +1' },
-          { value: 'start_cooldown', label: '开始冷却：锁定额度' },
-          { value: 'new_day_reset', label: '新日重置：清零并解锁' },
-        ],
-        default: '',
-        required: false,
-      },
-      {
-        key: 'daily_quota_count',
-        label: '每日投喂上限',
+        key: 'variable_value',
+        label: '变量数值',
         type: 'number',
-        min: 1,
-        max: 10000,
+        min: -999999,
+        max: 999999,
         step: 1,
-        default: 3,
-        unit: '次/颗',
+        default: 1,
+        integer: true,
         required: false,
       },
       {
-        key: 'cooldown_s',
-        label: '冷却时长',
-        type: 'number',
-        min: 0.1,
-        max: 86400,
-        step: 0.1,
-        default: 72000,
-        unit: '秒',
+        key: 'variable_persistent',
+        label: '是否持久状态',
+        type: 'checkbox',
+        default: false,
         required: false,
       },
     ],
-    help: '记录实验事件。可选做运行时计数器操作；第5链路可写入最小持久额度状态。',
+    help: '记录实验事件，并可选写入变量。勾选持久状态后变量跨服务重启保留。',
     ports: { inputs: -1, outputs: 1 },
   },
   sniffer: {
@@ -342,7 +347,7 @@ const NODE_SCHEMAS = {
 };
 
 // Palette display order
-const PALETTE_ORDER = ['trigger', 'delay', 'condition', 'execute', 'loop', 'and', 'not', 'fork', 'record', 'record_end', 'sniffer'];
+const PALETTE_ORDER = ['trigger', 'delay', 'condition', 'execute', 'loop', 'and', 'not', 'fork', 'record', 'sniffer'];
 
 // ============================================================================
 // State
@@ -428,13 +433,24 @@ function restoreHistory(snapshot) {
   flowNodes = {};
   flowEdges = [];
   nodeIdCounter = snapshot.counter || 0;
+  if (typeof setFlowWorkspaceBaseSize === 'function') {
+    let right = FLOW_WORKSPACE_MIN_WIDTH;
+    let bottom = FLOW_WORKSPACE_MIN_HEIGHT;
+    Object.values(snapshot.nodes || {}).forEach((nd) => {
+      right = Math.max(right, Number(nd.left || 0) + FLOW_NODE_WIDTH + 220);
+      bottom = Math.max(bottom, Number(nd.top || 0) + FLOW_NODE_MIN_HEIGHT + 180);
+    });
+    setFlowWorkspaceBaseSize(right, bottom);
+  }
 
   for (const [id, nd] of Object.entries(snapshot.nodes)) {
-    const el = createNodeEl(nd.type, nd.label, nd.params);
+    const params = normalizeNodeParams(nd.type, nd.params || {});
+    const displayLabel = getNodeDisplayName(nd.type, nd.label, params, true);
+    const el = createNodeEl(nd.type, displayLabel, params);
     el.id = 'node_' + id;
     flowNodesDiv.appendChild(el);
     placeNodeWithinCanvas(el, Number(nd.left), Number(nd.top));
-    flowNodes[id] = { el, type: nd.type, label: nd.label, params: nd.params || {}, fixed: nd.fixed || false };
+    flowNodes[id] = { el, type: nd.type, label: getCanonicalNodeLabel(nd.type), params, fixed: nd.fixed || false };
     if (!nd.fixed) makeDraggable(el, id);
   }
   flowEdges = JSON.parse(JSON.stringify(snapshot.edges || []));
@@ -459,12 +475,98 @@ function getNodeId(el) {
 // Flow data save/load
 // ============================================================================
 
+function getCanonicalNodeLabel(type) {
+  return NODE_SCHEMAS[type]?.label || type;
+}
+
+function getNodeDisplayName(type, savedLabel = '', params = {}, includeCanonical = true) {
+  const canonical = getCanonicalNodeLabel(type);
+  const explicit = (params?.display_name || '').trim();
+  if (explicit) return explicit;
+  const legacyLabel = String(savedLabel || '').trim();
+  if (legacyLabel && legacyLabel !== canonical && legacyLabel !== type) return legacyLabel;
+  return includeCanonical ? canonical : '';
+}
+
+function normalizeNodeParams(type, params = {}) {
+  const next = { ...(params || {}) };
+
+  if (type === 'delay') {
+    if (next.duration_value === undefined && next.duration_s !== undefined) {
+      const seconds = Number(next.duration_s);
+      next.duration_value = Number.isFinite(seconds) ? Math.max(0, Math.min(1000, Math.round(seconds))) : 1;
+      next.duration_unit = 'seconds';
+    }
+    delete next.duration_s;
+    if (next.duration_value === undefined || next.duration_value === null || next.duration_value === '') {
+      next.duration_value = 1;
+    } else {
+      const value = Number(next.duration_value);
+      next.duration_value = Number.isFinite(value) ? Math.max(0, Math.min(1000, Math.round(value))) : 1;
+    }
+    if (!['seconds', 'minutes', 'hours'].includes(next.duration_unit)) {
+      next.duration_unit = 'seconds';
+    }
+  }
+
+  if (type === 'record') {
+    if (next.counter_name && next.counter_op && !next.variable_name) {
+      const opMap = {
+        '+1': ['add', 1],
+        '-1': ['subtract', 1],
+        '=0': ['set', 0],
+        '=1': ['set', 1],
+      };
+      if (opMap[next.counter_op]) {
+        next.variable_name = next.counter_name;
+        next.variable_op = opMap[next.counter_op][0];
+        next.variable_value = opMap[next.counter_op][1];
+        next.variable_persistent = false;
+        delete next.counter_name;
+        delete next.counter_op;
+      }
+    }
+    if (next.variable_op && !['add', 'subtract', 'set'].includes(next.variable_op)) {
+      next.variable_op = 'add';
+    }
+    if (next.variable_value !== undefined && next.variable_value !== null && next.variable_value !== '') {
+      const value = Number(next.variable_value);
+      next.variable_value = Number.isFinite(value) ? Math.round(value) : 0;
+    }
+    if (next.variable_persistent !== undefined) {
+      next.variable_persistent = Boolean(next.variable_persistent);
+    }
+  }
+
+  if (type === 'condition') {
+    if (next.source === 'counter' && next.counter_name && !next.variable_name) {
+      next.source = 'variable';
+      next.variable_name = next.counter_name;
+      delete next.counter_name;
+    }
+    if (!['trigger_count', 'variable'].includes(next.source)) {
+      next.source = 'trigger_count';
+    }
+    if (!['value', 'variable'].includes(next.compare_source)) {
+      next.compare_source = 'value';
+    }
+    if (next.compare_source !== 'variable') {
+      const value = Number(next.value ?? 0);
+      next.value = Number.isFinite(value) ? Math.round(value) : 0;
+    }
+  }
+
+  return next;
+}
+
 function getFlowData() {
   const nodes = {};
   for (const [id, n] of Object.entries(flowNodes)) {
+    const params = normalizeNodeParams(n.type, n.params || {});
+    n.params = params;
     nodes[id] = {
-      id, node_type: n.type, label: n.label,
-      params: n.params || {},
+      id, node_type: n.type, label: getCanonicalNodeLabel(n.type),
+      params,
       x: parseInt(n.el.style.left), y: parseInt(n.el.style.top),
     };
   }
@@ -484,24 +586,35 @@ function loadFlowData(data) {
   nodeIdCounter = 0;
   connectingFrom = null;
   connectingMousePos = null;
+  if (typeof syncFlowWorkspaceToFlowData === 'function') {
+    syncFlowWorkspaceToFlowData(data);
+  }
+  if (typeof resetFlowZoom === 'function') {
+    resetFlowZoom();
+  }
 
   if (data && data.nodes) {
     for (const [id, nd] of Object.entries(data.nodes)) {
-      const n = createNodeEl(nd.node_type, nd.label || id, nd.params);
+      const params = normalizeNodeParams(nd.node_type, nd.params || {});
+      const displayLabel = getNodeDisplayName(nd.node_type, nd.label || id, params, true);
+      if (!params.display_name && displayLabel !== getCanonicalNodeLabel(nd.node_type)) {
+        params.display_name = displayLabel;
+      }
+      const n = createNodeEl(nd.node_type, displayLabel, params);
       n.id = 'node_' + id;
       const isFixed = nd.node_type === 'start' || nd.node_type === 'end';
       if (nd.node_type === 'start') {
         document.getElementById('flowNodes').appendChild(n);
-        placeNodeWithinCanvas(n, Number(nd.x ?? 16), Number(nd.y ?? 16));
+        placeNodeAtAvailablePosition(n, Number(nd.x ?? 16), Number(nd.y ?? 16));
       } else if (nd.node_type === 'end') {
         const visible = getVisibleCanvasSize();
         document.getElementById('flowNodes').appendChild(n);
-        placeNodeWithinCanvas(n, Number(nd.x ?? (visible.width - 156)), Number(nd.y ?? (visible.height - 76)));
+        placeNodeAtAvailablePosition(n, Number(nd.x ?? (visible.width - 156)), Number(nd.y ?? (visible.height - 76)));
       } else {
         document.getElementById('flowNodes').appendChild(n);
-        placeNodeWithinCanvas(n, Number(nd.x ?? 100), Number(nd.y ?? 100));
+        placeNodeAtAvailablePosition(n, Number(nd.x ?? 100), Number(nd.y ?? 100));
       }
-      flowNodes[id] = { el: n, type: nd.node_type, label: nd.label || id, params: nd.params || {}, fixed: isFixed };
+      flowNodes[id] = { el: n, type: nd.node_type, label: getCanonicalNodeLabel(nd.node_type), params, fixed: isFixed };
       if (isFixed) n.setAttribute('data-fixed', 'true');
       makeDraggable(n, id);
       const idx = parseInt(id.split('_')[1]) || 0;

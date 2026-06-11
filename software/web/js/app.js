@@ -1,6 +1,7 @@
 const WS_URL = `ws://${location.host}/ws`;
 let ws = null;
 let currentSessionId = '';
+let monitorEventKeys = new Set();
 
 function toast(msg, type = 'info') {
   const container = document.getElementById('toastContainer');
@@ -25,8 +26,164 @@ function log(msg, type = 'info') {
   el.scrollTop = el.scrollHeight;
 }
 
+function parseMonitorPayload(raw) {
+  if (!raw) return {};
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw);
+    } catch (e) {
+      return {};
+    }
+  }
+  return raw;
+}
+
+function monitorSafeText(value, fallback = '') {
+  const text = value === undefined || value === null || value === '' ? fallback : String(value);
+  return escapeHtml(text);
+}
+
+function monitorVariableOpLabel(op) {
+  const labels = {
+    add: '加',
+    subtract: '减',
+    set: '设为',
+  };
+  return labels[op] || op || '更新';
+}
+
+function monitorActuatorLabel(actuatorId, explicitLabel = '') {
+  if (explicitLabel) return explicitLabel;
+  const id = String(actuatorId || '').trim();
+  if (!id) return '未指定执行器';
+
+  if (typeof _cachedActuators !== 'undefined' && Array.isArray(_cachedActuators)) {
+    const found = _cachedActuators.find((item) => (item.source_id || item.id) === id);
+    if (found && (found.display_name || found.label)) return found.display_name || found.label;
+  }
+
+  const labels = {
+    'actuator:feeder': '给食器（出粮器）',
+    feeder: '给食器（出粮器）',
+    'actuator:shock': '电击器',
+    shock: '电击器',
+    'actuator:light': '灯光',
+    light: '灯光',
+    'actuator:buzzer': '蜂鸣器',
+    buzzer: '蜂鸣器',
+  };
+  return labels[id] || id;
+}
+
+function monitorRecordLabel(data, eventName) {
+  const recordName = eventName || data.node_label || data.node_id || '未命名事件';
+  const safeRecordName = monitorSafeText(recordName);
+  const variableName = (data.variable_name || '').trim();
+  if (!variableName) return `📝 记录事件: ${safeRecordName}`;
+
+  const opLabel = monitorVariableOpLabel(data.variable_op);
+  const value = data.variable_value ?? 0;
+  const result = data.variable_result;
+  const persistent = data.variable_persistent ? '（持久）' : '';
+  const resultText = result === undefined || result === null ? '' : ` → 当前=${monitorSafeText(result)}`;
+  return `📝 记录事件: ${safeRecordName}；变量 ${monitorSafeText(variableName)} ${monitorSafeText(opLabel)} ${monitorSafeText(value)}${resultText}${persistent}`;
+}
+
+function monitorConditionLabel(data) {
+  const opLabels = {
+    eq: '等于',
+    neq: '不等于',
+    gt: '大于',
+    lt: '小于',
+    gte: '大于等于',
+    lte: '小于等于',
+  };
+  const result = data.result ? '✅ 真' : '❌ 假';
+  const subject = data.variable_name ? `变量 ${monitorSafeText(data.variable_name)}` : 'TRIGGER 累计计数';
+  if (data.actual_value !== undefined && data.expected_value !== undefined) {
+    return `🔀 条件判断: ${subject} ${monitorSafeText(opLabels[data.operator] || data.operator || '')} ${monitorSafeText(data.expected_value)}，当前=${monitorSafeText(data.actual_value)} → ${result}`;
+  }
+  return `🔀 条件判断: ${result}`;
+}
+
+function monitorEventKey(event) {
+  const sessionId = event.session_id || currentSessionId || '';
+  const eventId = event.event_id || event.id;
+  if (eventId !== undefined && eventId !== null && eventId !== '') {
+    return `${sessionId}:event:${eventId}`;
+  }
+  const data = event.data || parseMonitorPayload(event.raw_payload);
+  const kind = event.kind || event.event_type || '';
+  return [
+    sessionId,
+    kind,
+    event.node_id || data.node_id || '',
+    data.type || '',
+    data.event_name || data.signal_id || '',
+    data.iteration || '',
+    event.ts_ms || event.timestamp || ''
+  ].join(':');
+}
+
+function renderMonitorEventOnce(event) {
+  const key = monitorEventKey(event);
+  if (monitorEventKeys.has(key)) return false;
+  monitorEventKeys.add(key);
+
+  const data = event.data || parseMonitorPayload(event.raw_payload);
+  const kind = event.kind || event.event_type || '';
+  const nodeType = data.type || kind;
+  const eventName = data.event_name || data.signal_id || '';
+
+  if (kind === 'node_executed') {
+    markEngineNode(event.node_id || data.node_id);
+    let label = '';
+    if (nodeType === 'trigger') label = '⚡ 触发节点';
+    else if (nodeType === 'record') label = monitorRecordLabel(data, eventName || data.node_id || event.node_id);
+    else if (nodeType === 'record_end') label = '⏹ 记录终止: ' + monitorSafeText(eventName || data.node_id || event.node_id);
+    else if (nodeType === 'execute') label = '🛠 执行动作: ' + monitorSafeText(monitorActuatorLabel(data.actuator_id, data.actuator_label));
+    else if (nodeType === 'delay') label = '⏱ 延时 ' + (data.duration_s || '') + '秒';
+    else if (nodeType === 'and') label = '📦 逻辑与输出';
+    else if (nodeType === 'not') label = '❌ 逻辑非放行';
+    else if (nodeType === 'fork') label = '🔀 逻辑分叉';
+    else if (nodeType === 'condition') label = monitorConditionLabel(data);
+    else label = '🔹 ' + monitorSafeText(nodeType || kind);
+    log(label, 'info');
+  } else if (kind === 'node_triggered') {
+    markEngineNode(event.node_id || data.node_id);
+    log('⚡ 触发: ' + monitorSafeText(eventName || data.node_id || event.node_id), 'success');
+  } else if (kind === 'sniffer_captured') {
+    log('👁 探针捕获: ' + monitorSafeText(eventName || data.signal_id || ''), 'info');
+  } else if (kind === 'loop_iteration') {
+    markEngineNode(event.node_id || data.node_id);
+    log('🔄 循环 第' + (data.iteration || '?') + '次', 'info');
+  } else if (kind === 'manual_trigger') {
+    log('手动触发已记录', 'success');
+  } else if (kind && kind.startsWith('camera_')) {
+    const eventLabel = data.event === 'leave' ? '离开' : (data.event === 'enter' ? '进入' : (data.event || '事件'));
+    log('摄像头：' + escapeHtml(data.zone || '区域') + ' ' + escapeHtml(eventLabel), 'success');
+  } else if (kind === 'loop_exit') {
+    log('🔄 循环退出: ' + monitorSafeText(data.reason || data.iterations + '次迭代' || '达到条件'), 'info');
+  } else if (kind === 'loop_timeout') {
+    log('⏰ 循环超时 (' + (data.timeout_s || '?') + '秒),强制退出', 'warn');
+  }
+  return true;
+}
+
+function markEngineNode(nodeId) {
+  if (nodeId && typeof markRuntimeNode === 'function') {
+    markRuntimeNode(nodeId);
+  }
+}
+
 function setBtnStop(disabled) {
   const btn = document.getElementById('btnStop');
+  if (btn) btn.disabled = disabled;
+  setManualTriggerButton(disabled);
+}
+
+function setManualTriggerButton(disabled) {
+  const btn = document.getElementById('btnManualTrigger');
   if (btn) btn.disabled = disabled;
 }
 
@@ -46,43 +203,29 @@ function connectWS() {
       }
       setBtnStop(true);
       renderExperimentList();
+    } else if (msg.type === 'manual_trigger') {
+      log('手动触发已发送', 'success');
+    } else if (msg.type === 'camera_event') {
+      if (msg.fed_to_flow) {
+        const zone = escapeHtml(msg.zone || '区域');
+        const eventLabel = msg.event === 'leave' ? '离开' : (msg.event === 'enter' ? '进入' : escapeHtml(msg.event || '事件'));
+        log(`摄像头：${zone} ${eventLabel}`, 'success');
+      } else if (window.DEBUG_RAW_SIGNAL_LOG === true) {
+        console.debug('camera event ignored by flow', msg);
+      }
     } else if (msg.type === 'signal') {
-      // 实时信号事件 → 事件日志
-      const sigLabel = msg.signal_id || '信号';
-      log(`📡 信号: ${sigLabel}`, 'info');
+      // 原始信号只保留为调试信息，不进入默认实验人员实时事件日志。
+      if (window.DEBUG_RAW_SIGNAL_LOG === true) console.debug('raw signal', msg);
     } else if (msg.type === 'engine_event') {
       // 引擎执行事件（TRIGGER 触发 / RECORD 记录 / DELAY 延时等） → 事件日志
-      const d = msg.data || {};
-      const nodeType = d.type || msg.kind;
-      const eventName = d.event_name || d.signal_id || '';
-      if (msg.kind === 'node_executed') {
-        let label = '';
-        if (nodeType === 'trigger') label = '⚡ 触发节点';
-        else if (nodeType === 'record') label = '📝 记录: ' + (eventName || d.node_id);
-        else if (nodeType === 'record_end') label = '⏹ 记录终止: ' + (eventName || d.node_id);
-        else if (nodeType === 'execute') label = '🛠 执行动作: ' + (d.actuator_id || '');
-        else if (nodeType === 'delay') label = '⏱ 延时 ' + (d.duration_s || '') + '秒';
-        else if (nodeType === 'and') label = '📦 逻辑与输出';
-        else if (nodeType === 'not') label = '❌ 逻辑非放行';
-        else if (nodeType === 'fork') label = '🔀 逻辑分叉';
-        else if (nodeType === 'condition') label = '🔀 条件判断: ' + (d.result ? '✅真' : '❌假');
-        else if (nodeType === 'loop_iteration') label = '🔄 循环 第' + d.iteration + '次';
-        else label = '🔹 ' + (nodeType || msg.kind);
-        log(label, 'info');
-      } else if (msg.kind === 'node_triggered') {
-        log('⚡ 触发: ' + (eventName || d.node_id), 'success');
-      } else if (msg.kind === 'sniffer_captured') {
-        log('👁 探针捕获: ' + (eventName || d.signal_id || ''), 'info');
-      } else if (msg.kind === 'loop_iteration') {
-        // B3 fix: 显示循环迭代事件
-        log('🔄 循环 第' + (d.iteration || '?') + '次', 'info');
-      } else if (msg.kind === 'loop_exit') {
-        // B3 fix: 显示循环退出事件
-        log('🔄 循环退出: ' + (d.reason || d.iterations + '次迭代' || '达到条件'), 'info');
-      } else if (msg.kind === 'loop_timeout') {
-        // B3 fix: 显示循环超时事件
-        log('⏰ 循环超时 (' + (d.timeout_s || '?') + '秒),强制退出', 'warn');
-      }
+      renderMonitorEventOnce({
+        event_id: msg.event_id,
+        session_id: msg.session_id,
+        event_type: msg.kind,
+        kind: msg.kind,
+        data: msg.data || {},
+        node_id: (msg.data || {}).node_id
+      });
     }
   };
   ws.onclose = () => {
@@ -113,7 +256,10 @@ document.querySelectorAll('.tab').forEach(tab => {
     tab.classList.add('active');
     document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
     if (tab.dataset.tab === 'flow' && typeof clampAllFlowNodes === 'function') {
-      requestAnimationFrame(() => clampAllFlowNodes());
+      requestAnimationFrame(() => {
+        if (typeof refreshFlowViewport === 'function') refreshFlowViewport();
+        clampAllFlowNodes();
+      });
     }
     if (tab.dataset.tab === 'experiment') {
       renderExperimentList();
@@ -565,6 +711,9 @@ async function stopExperiment() {
   if (typeof stopCameraDetection === 'function') {
     stopCameraDetection();
   }
+  if (typeof stopMonitorCameraPreview === 'function') {
+    stopMonitorCameraPreview();
+  }
   try {
     await api('/api/experiment/stop', { method: 'POST' });
     toast('实验已停止', 'warn');
@@ -573,20 +722,38 @@ async function stopExperiment() {
     toast('停止失败: ' + e.message, 'error');
   }
   setBtnStop(true);
-  if (typeof clearExperimentContext === 'function') {
-    clearExperimentContext();
+}
+
+async function manualTrigger() {
+  const btn = document.getElementById('btnManualTrigger');
+  if (btn) btn.disabled = true;
+  try {
+    await api('/api/experiment/manual-trigger', {
+      method: 'POST',
+      body: JSON.stringify({ experiment_id: currentExperimentId, session_id: currentSessionId }),
+    });
+    toast('手动触发已发送', 'success');
+  } catch (e) {
+    toast('手动触发失败: ' + e.message, 'error');
+    log('手动触发失败: ' + e.message, 'error');
+  } finally {
+    try {
+      const state = await api('/api/experiment/state');
+      setManualTriggerButton(state.engine !== 'running');
+    } catch (e) {
+      setManualTriggerButton(true);
+    }
   }
-  const badge = document.getElementById('currentExpBadge');
-  if (badge) badge.style.display = 'none';
 }
 
 let monitorInterval = null;
 
 function startMonitorPoll(sessionId) {
+  const keepPrefix = `${sessionId}:`;
+  monitorEventKeys = new Set([...monitorEventKeys].filter(key => key.startsWith(keepPrefix)));
   currentSessionId = sessionId;
   if (monitorInterval) clearInterval(monitorInterval);
   const start = Date.now();
-  const shownEventKeys = new Set();
   let lastEventCount = 0;
   monitorInterval = setInterval(async () => {
     try {
@@ -596,6 +763,9 @@ function startMonitorPoll(sessionId) {
         clearInterval(monitorInterval);
         monitorInterval = null;
         setBtnStop(true);
+        if (typeof stopMonitorCameraPreview === 'function') stopMonitorCameraPreview();
+      } else {
+        setManualTriggerButton(false);
       }
     } catch (e) { /* ignore */ }
     const elapsed = Math.floor((Date.now() - start) / 1000);
@@ -608,26 +778,7 @@ function startMonitorPoll(sessionId) {
         if (ev.events.length > lastEventCount) {
           for (let i = lastEventCount; i < ev.events.length; i++) {
             const e2 = ev.events[i];
-            const key = e2.event_type + '_' + (e2.timestamp || i);
-            if (shownEventKeys.has(key)) continue;
-            shownEventKeys.add(key);
-            if (e2.event_type === 'node_executed') {
-              const d2 = typeof e2.raw_payload === 'string' ? JSON.parse(e2.raw_payload) : (e2.raw_payload || {});
-              const nt = d2.type || '';
-              if (nt === 'record') log('📝 记录: ' + (d2.event_name || e2.node_id), 'info');
-              else if (nt === 'record_end') log('⏹ 记录终止: ' + (d2.event_name || e2.node_id), 'info');
-              else if (nt === 'trigger') log('⚡ 触发节点', 'info');
-              else if (nt === 'execute') log('🛠 执行: ' + (d2.actuator_id || ''), 'info');
-            } else if (e2.event_type === 'loop_iteration') {
-              const d2 = typeof e2.raw_payload === 'string' ? JSON.parse(e2.raw_payload) : (e2.raw_payload || {});
-              log('🔄 循环 第' + (d2.iteration || '?') + '次', 'info');
-            } else if (e2.event_type === 'loop_exit') {
-              const d2 = typeof e2.raw_payload === 'string' ? JSON.parse(e2.raw_payload) : (e2.raw_payload || {});
-              log('🔄 循环退出: ' + (d2.reason || d2.iterations + '次迭代' || '达到条件'), 'info');
-            } else if (e2.event_type === 'loop_timeout') {
-              const d2 = typeof e2.raw_payload === 'string' ? JSON.parse(e2.raw_payload) : (e2.raw_payload || {});
-              log('⏰ 循环超时 (' + (d2.timeout_s || '?') + '秒),强制退出', 'warn');
-            }
+            renderMonitorEventOnce(e2);
           }
           lastEventCount = ev.events.length;
         }
@@ -688,6 +839,13 @@ async function runFlow() {
     log('实验已启动', 'info');
     startMonitorPoll(runResult.session_id);
     document.querySelector('[data-tab="monitor"]').click();
+    // 运行监控只读摄像头预览（仅启用摄像头且已配区域的实验）
+    if (typeof startMonitorCameraPreview === 'function') {
+      try {
+        const exp = await api(`/api/experiments/${currentExperimentId}`);
+        startMonitorCameraPreview(currentExperimentId, !!exp.trigger_camera);
+      } catch (e) { /* 预览失败不影响实验 */ }
+    }
   } catch (e) {
     toast('❌ 运行失败：' + e.message, 'error');
     log('运行失败: ' + e.message, 'error');
@@ -751,6 +909,13 @@ renderExperimentList();
       // Switch to monitor tab
       const monitorTab = document.querySelector('[data-tab="monitor"]');
       if (monitorTab) monitorTab.click();
+      // 恢复运行监控只读摄像头预览
+      if (state.experiment_id && typeof startMonitorCameraPreview === 'function') {
+        try {
+          const exp = await api(`/api/experiments/${state.experiment_id}`);
+          startMonitorCameraPreview(state.experiment_id, !!exp.trigger_camera);
+        } catch (e) { /* ignore */ }
+      }
     }
   } catch (e) {
     // 服务不可用时静默失败

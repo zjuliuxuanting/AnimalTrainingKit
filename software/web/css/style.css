@@ -218,3 +218,234 @@ tr:hover { background: #f8f8f8; }
     box-shadow: 0 -4px 16px rgba(0,0,0,0.15);
   }
 }
+
+/* --------------------------------------------------------------------------
+   Kids UI fork theme
+   Branch-only visual exploration: brighter classroom feel, bigger touch areas,
+   block-like flow nodes. No schema or engine behavior changes.
+   -------------------------------------------------------------------------- */
+body.kids-ui {
+  --primary: #2F7DE1;
+  --success: #36A86B;
+  --warning: #F5A623;
+  --danger: #EF5B5B;
+  --bg: #F7F3E8;
+  --card: #FFFDF7;
+  --text: #263247;
+  --text-secondary: #607087;
+  --border: #E7DDC7;
+  background:
+    radial-gradient(circle at 18px 18px, rgba(47, 125, 225, 0.08) 0 2px, transparent 3px),
+    linear-gradient(180deg, #F9F6EE 0%, #EEF7F6 100%);
+  background-size: 32px 32px, auto;
+  color: var(--text);
+  font-family: "Avenir Next", "Helvetica Neue", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body.kids-ui .navbar {
+  background: #22314F;
+  padding: 16px 24px;
+  border-bottom: 4px solid #F5C542;
+  box-shadow: 0 8px 0 rgba(34, 49, 79, 0.08);
+}
+
+body.kids-ui .navbar h1 {
+  font-size: 20px;
+  letter-spacing: 0;
+}
+
+body.kids-ui .tabs {
+  gap: 8px;
+  padding: 10px 16px 0;
+  background: rgba(255, 253, 247, 0.92);
+  border-bottom: 2px solid var(--border);
+}
+
+body.kids-ui .tab {
+  min-height: 44px;
+  padding: 11px 16px;
+  border: 2px solid transparent;
+  border-bottom: 0;
+  border-radius: 14px 14px 0 0;
+  color: #536177;
+  font-weight: 700;
+}
+
+body.kids-ui .tab:hover {
+  background: #FFF4CF;
+  color: #22314F;
+}
+
+body.kids-ui .tab.active {
+  background: #FFFFFF;
+  color: #22314F;
+  border-color: var(--border);
+  border-bottom-color: #FFFFFF;
+  box-shadow: 0 -3px 0 #F5C542 inset;
+}
+
+body.kids-ui .tab-content {
+  padding: 20px;
+}
+
+body.kids-ui .card {
+  border: 2px solid var(--border);
+  border-radius: 14px;
+  background: rgba(255, 253, 247, 0.96);
+  box-shadow: 0 8px 0 rgba(38, 50, 71, 0.08);
+}
+
+body.kids-ui .card h3,
+body.kids-ui .card h4 {
+  color: #22314F;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 800;
+}
+
+body.kids-ui .btn {
+  min-height: 40px;
+  border-radius: 12px;
+  border: 2px solid rgba(34, 49, 79, 0.14);
+  box-shadow: 0 4px 0 rgba(34, 49, 79, 0.12);
+  font-weight: 800;
+}
+
+body.kids-ui .btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 5px 0 rgba(34, 49, 79, 0.12);
+}
+
+body.kids-ui .btn:active:not(:disabled) {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 rgba(34, 49, 79, 0.12);
+}
+
+body.kids-ui .btn-sm {
+  min-height: 34px;
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+body.kids-ui .btn-primary { background: #2F7DE1; }
+body.kids-ui .btn-success { background: #36A86B; }
+body.kids-ui .btn-warning { background: #F5A623; color: #22314F; }
+body.kids-ui .btn-danger { background: #EF5B5B; }
+
+body.kids-ui .form-group label {
+  color: #40516B;
+  font-weight: 800;
+}
+
+body.kids-ui .form-group input,
+body.kids-ui .form-group select,
+body.kids-ui .form-group textarea {
+  min-height: 40px;
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  background: #FFFFFF;
+}
+
+body.kids-ui .form-group input:focus,
+body.kids-ui .form-group select:focus,
+body.kids-ui .form-group textarea:focus {
+  outline: 3px solid rgba(47, 125, 225, 0.18);
+  border-color: #2F7DE1;
+}
+
+body.kids-ui #flowViewportToolbar {
+  background: #FFF8DD !important;
+  border-bottom: 2px solid var(--border) !important;
+}
+
+body.kids-ui #flowCanvas {
+  background:
+    linear-gradient(#E9EEF6 1px, transparent 1px),
+    linear-gradient(90deg, #E9EEF6 1px, transparent 1px),
+    #FBFCFF !important;
+  background-size: 28px 28px !important;
+  border: 2px solid var(--border) !important;
+  border-radius: 14px !important;
+}
+
+body.kids-ui #nodePalette .palette-group-label {
+  color: #758298 !important;
+  font-weight: 900;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+}
+
+body.kids-ui #nodePalette .palette-item {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 2px solid rgba(34, 49, 79, 0.1);
+  border-left-width: 8px;
+  background: #FFFFFF;
+  box-shadow: 0 4px 0 rgba(34, 49, 79, 0.08);
+  font-weight: 800;
+}
+
+body.kids-ui #nodePalette .palette-item:hover {
+  background: #FFF4CF;
+  transform: translateX(2px);
+}
+
+body.kids-ui .flow-node {
+  border-radius: 14px !important;
+  box-shadow: 0 8px 0 rgba(34, 49, 79, 0.14) !important;
+  border: 3px solid rgba(34, 49, 79, 0.18) !important;
+}
+
+body.kids-ui .flow-node .node-header {
+  min-height: 34px;
+  border-radius: 11px 11px 0 0;
+  font-size: 13px !important;
+  letter-spacing: 0;
+}
+
+body.kids-ui .flow-node .node-body {
+  min-height: 32px;
+  background: #FFFDF7;
+  color: #536177 !important;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+body.kids-ui .node-port,
+body.kids-ui .port-row-dot {
+  border: 3px solid #FFFFFF !important;
+  box-shadow: 0 0 0 2px rgba(34, 49, 79, 0.18);
+}
+
+body.kids-ui .port-row-label {
+  font-weight: 900;
+  color: #22314F;
+}
+
+body.kids-ui .event-log {
+  background: #22314F;
+  border: 3px solid #F5C542;
+  border-radius: 16px;
+  color: #EEF7F6;
+  font-family: "Avenir Next", "Helvetica Neue", sans-serif;
+  font-size: 14px;
+  line-height: 1.7;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.06);
+}
+
+body.kids-ui .event-log .info { color: #9DD6FF; }
+body.kids-ui .event-log .warn { color: #FFD166; }
+body.kids-ui .event-log .error { color: #FF9B9B; }
+body.kids-ui .event-log .success { color: #9AE6B4; }
+
+body.kids-ui .stat-card .value {
+  color: #2F7DE1;
+}
+
+body.kids-ui .badge {
+  border-radius: 999px;
+  font-weight: 900;
+}

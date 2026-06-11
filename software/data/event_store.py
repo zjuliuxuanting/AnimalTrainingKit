@@ -44,7 +44,7 @@ class EventStore:
         raw_payload: Dict[str, Any] = None,
         smoothing_flag: str = "",
     ):
-        self._db.execute(
+        cursor = self._db.execute(
             """INSERT INTO events
                (session_id, ts_ms, device_ts_ms, host_ts_ms,
                 event_type, node_id, signal_id, actuator_id,
@@ -70,6 +70,7 @@ class EventStore:
             (session_id,),
         )
         self._db.commit()
+        return cursor.lastrowid
 
     def append_batch(self, events: List[Dict[str, Any]]):
         rows = [

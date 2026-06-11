@@ -24,8 +24,9 @@ class TestEventCRUD:
     def test_append_and_count(self, store):
         """追加事件 → count +1"""
         store.ensure_session("s1", name="测试会话")
-        store.append_event(session_id="s1", event_type="manual_trigger", ts_ms=1000)
+        event_id = store.append_event(session_id="s1", event_type="manual_trigger", ts_ms=1000)
         events = store.get_events("s1")
+        assert event_id == events[0]["id"]
         assert len(events) == 1
         assert events[0]["event_type"] == "manual_trigger"
 

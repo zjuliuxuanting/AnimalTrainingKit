@@ -17,9 +17,11 @@ function selectNode(id) {
   if (id && flowNodes[id]) {
     flowNodes[id].el.style.borderColor = '#1976D2';
     showConfigPanel(id);
+    ensureFlowNodeVisible(id, { behavior: 'auto' });
   } else {
     document.getElementById('flowConfigPanel').style.display = 'none';
   }
+  updateFlowViewportBadge();
 }
 
 function showConfigPanel(id) {
@@ -32,18 +34,25 @@ function showConfigPanel(id) {
     return;
   }
 
-  if (!schema || schema.fields.length === 0) {
+  if (!schema) {
     document.getElementById('flowConfigPanel').style.display = 'none';
     return;
   }
 
   document.getElementById('flowConfigPanel').style.display = 'block';
-  document.getElementById('cfgLabel').value = n.label || schema.label;
 
   let extra = '';
   const params = n.params || {};
+  const displayName = getNodeDisplayName(n.type, n.label, params, false);
+  if (displayName && !params.display_name) {
+    params.display_name = displayName;
+    n.params = params;
+  }
 
-  for (const field of schema.fields) {
+  document.getElementById('cfgNodeType').value = schema.label;
+  document.getElementById('cfgDisplayName').value = displayName;
+
+  for (const field of (schema.fields || [])) {
     if (field.condition && !field.condition(params)) continue;
 
     if (field.type === 'select' && field.options === 'dynamic') {
@@ -61,8 +70,12 @@ function showConfigPanel(id) {
       const val = params[field.key] ?? field.default ?? '';
       const step = field.step || 1;
       const unit = field.unit || '';
-      const onChangeHandler = `updateParam('${id}','${field.key}',parseFloat(this.value))`;
-      extra += `<label>${field.label}${unit ? ' (' + unit + ')' : ''}</label><input type="number" id="cfg_${field.key}" value="${val}" step="${step}" onchange="${onChangeHandler}" oninput="updateParam('${id}','${field.key}',parseFloat(this.value))">`;
+      const parser = field.integer ? 'parseInt(this.value, 10)' : 'parseFloat(this.value)';
+      const onChangeHandler = `updateParam('${id}','${field.key}',${parser})`;
+      extra += `<label>${field.label}${unit ? ' (' + unit + ')' : ''}</label><input type="number" id="cfg_${field.key}" value="${val}" step="${step}" onchange="${onChangeHandler}" oninput="${onChangeHandler}">`;
+    } else if (field.type === 'checkbox') {
+      const checked = params[field.key] === true ? 'checked' : '';
+      extra += `<label style="display:flex;align-items:center;gap:8px;font-weight:500"><input type="checkbox" id="cfg_${field.key}" ${checked} onchange="updateParam('${id}','${field.key}',this.checked)"> ${field.label}</label>`;
     } else if (field.type === 'text') {
       const val = escapeHtml(params[field.key] ?? '');
       extra += `<label>${field.label}</label><input type="text" id="cfg_${field.key}" value="${val}" onchange="updateParam('${id}','${field.key}',this.value)">`;
@@ -81,8 +94,10 @@ function buildDynamicSelectOptions(fieldKey, selected) {
   if (fieldKey === 'actuator_id') {
     if (_cachedActuators) {
       return _cachedActuators.map(s => {
-        const sel = s.id === selected ? 'selected' : '';
-        return `<option value="${s.id}" ${sel}>${escapeHtml(s.display_name)}</option>`;
+        const sourceId = s.source_id || s.id;
+        const displayName = s.display_name || s.label || sourceId;
+        const sel = sourceId === selected ? 'selected' : '';
+        return `<option value="${escapeHtml(String(sourceId))}" ${sel}>${escapeHtml(displayName)}</option>`;
       }).join('');
     }
     return `<option value="actuator:feeder" ${selected === 'actuator:feeder' ? 'selected' : ''}>给食器（出粮器）</option>
@@ -93,12 +108,10 @@ function buildDynamicSelectOptions(fieldKey, selected) {
   if (_cachedSources && _cachedSources.length > 0) {
     return _cachedSources.map(s => {
       const sel = s.id === selected ? 'selected' : '';
-      return `<option value="${s.id}" ${sel}>${s.label}</option>`;
+      return `<option value="${escapeHtml(String(s.id))}" ${sel}>${escapeHtml(s.label)}</option>`;
     }).join('');
   }
-  return `<option value="mock:trigger" ${selected === 'mock:trigger' ? 'selected' : ''}>模拟信号（测试用）</option>
-    <option value="camera:区域A:enter" ${selected === 'camera:区域A:enter' ? 'selected' : ''}>摄像头 - 区域 A - 进入</option>
-    <option value="camera:区域A:leave" ${selected === 'camera:区域A:leave' ? 'selected' : ''}>摄像头 - 区域 A - 离开</option>`;
+  return `<option value="" disabled selected>请先配置摄像头区域，或在运行监控使用手动触发</option>`;
 }
 
 // ============================================================================
@@ -117,7 +130,7 @@ function updateParam(id, key, value) {
   if (!schema) return;
 
   const affectedFields = [];
-  for (const field of schema.fields) {
+  for (const field of (schema.fields || [])) {
     if (field.condition && field.key !== key) {
       const condStr = field.condition.toString();
       if (condStr.includes(key)) affectedFields.push(field.key);
@@ -137,12 +150,17 @@ function updateParam(id, key, value) {
 
 function updateNodeConfig() {
   const id = selectedNodeId;
-  const label = document.getElementById('cfgLabel').value;
   if (id && flowNodes[id] && !flowNodes[id].fixed) {
-    flowNodes[id].label = label;
+    const schema = NODE_SCHEMAS[flowNodes[id].type];
+    const displayName = (document.getElementById('cfgDisplayName')?.value || '').trim();
+    if (!flowNodes[id].params) flowNodes[id].params = {};
+    if (displayName) flowNodes[id].params.display_name = displayName;
+    else delete flowNodes[id].params.display_name;
+    flowNodes[id].label = schema?.label || flowNodes[id].type;
     const hdr = flowNodes[id].el.querySelector('.node-header');
     if (hdr) {
       const span = hdr.querySelector('span');
+      const label = displayName || schema?.label || flowNodes[id].type;
       const bgColor = hdr.style.background || NODE_SCHEMAS[flowNodes[id].type]?.color || '';
       if (span) hdr.innerHTML = span.outerHTML + ' ' + escapeHtml(label);
       else hdr.textContent = label;
@@ -164,7 +182,7 @@ function validateNodeParams(id) {
   const params = n.params || {};
   const errors = [];
 
-  for (const field of schema.fields) {
+  for (const field of (schema.fields || [])) {
     if (field.condition && !field.condition(params)) continue;
 
     if (field.required) {
@@ -183,6 +201,9 @@ function validateNodeParams(id) {
 
     if (field.type === 'number' && params[field.key] !== undefined && params[field.key] !== '' && !isNaN(params[field.key])) {
       const val = params[field.key];
+      if (field.integer && !Number.isInteger(Number(val))) {
+        errors.push(`${field.label} 必须是整数`);
+      }
       if (field.min !== undefined && val < field.min) {
         const unit = field.unit ? ` ${field.unit}` : '';
         errors.push(`${field.label} 不能小于 ${field.min}${unit}`);
@@ -213,13 +234,17 @@ function validateNodeParams(id) {
 
 document.addEventListener('mousemove', (e) => {
   if (dragState) {
-    const canvas = document.getElementById('flowCanvas');
-    const rect = canvas.getBoundingClientRect();
-    placeNodeWithinCanvas(
+    const point = canvasEventToLogicalPoint(e);
+    const rawX = point.x - dragState.offsetX;
+    const rawY = point.y - dragState.offsetY;
+    const pos = placeNodeWithinCanvas(
       dragState.el,
-      e.clientX - rect.left + canvas.scrollLeft - dragState.offsetX,
-      e.clientY - rect.top + canvas.scrollTop - dragState.offsetY
+      rawX,
+      rawY
     );
+    dragState.wasOutOfBounds = dragState.wasOutOfBounds ||
+      Math.abs(pos.x - rawX) > 0.5 ||
+      Math.abs(pos.y - rawY) > 0.5;
     updateSvg();
   }
   if (connectingFrom) {
@@ -236,6 +261,14 @@ document.addEventListener('mousemove', (e) => {
 
 document.addEventListener('mouseup', (e) => {
   if (dragState) {
+    if (dragState.wasOutOfBounds) {
+      const currentX = Number.parseFloat(dragState.el.style.left || '0');
+      const currentY = Number.parseFloat(dragState.el.style.top || '0');
+      if (!isNodePositionFree(dragState.el, { x: currentX, y: currentY })) {
+        placeNodeAtAvailablePosition(dragState.el, currentX, currentY);
+        updateSvg();
+      }
+    }
     dragState.el.style.zIndex = '10';
     dragState.el.style.boxShadow = '0 2px 8px rgba(0,0,0,0.12)';
     dragState = null;
@@ -339,10 +372,10 @@ document.getElementById('nodePalette').addEventListener('mousedown', (e) => {
 
   nodeIdCounter++;
   const id = type + '_' + nodeIdCounter;
-  const label = item.textContent.trim();
+  const label = schema.label;
 
   const defaults = {};
-  for (const field of schema.fields) {
+  for (const field of (schema.fields || [])) {
     if (field.default !== undefined) defaults[field.key] = field.default;
   }
   // TRIGGER: auto-select first available signal source
@@ -360,7 +393,7 @@ document.getElementById('nodePalette').addEventListener('mousedown', (e) => {
   const offsetY = (Math.floor(nodeCreationOffset / 5) % 12) * 20;
   nodeCreationOffset++;
   document.getElementById('flowNodes').appendChild(el);
-  placeNodeWithinCanvas(el, 200 + offsetX, 100 + offsetY);
+  placeNodeAtAvailablePosition(el, 200 + offsetX, 100 + offsetY);
   flowNodes[id] = { el, type, label, params: defaults, fixed: false };
   makeDraggable(el, id);
   selectNode(id);
@@ -548,6 +581,7 @@ async function saveFlow() {
 
 async function loadFlowFromExperiment(expId) {
   if (!expId) return;
+  initializeFlowViewport();
   // Force clear canvas before loading
   flowNodes = {};
   flowEdges = [];
@@ -563,12 +597,14 @@ async function loadFlowFromExperiment(expId) {
       initFixedNodes();
       saveHistory();
       updateSvg();
+      resetFlowZoom();
     }
   } catch (e) {
     // Silent fail, show START/END
     initFixedNodes();
     saveHistory();
     updateSvg();
+    resetFlowZoom();
   }
 }
 
@@ -664,7 +700,6 @@ function initPaletteTooltips() {
     fork: '🔀 逻辑分叉 — 点击放置，1入2出无条件复制信号',
     record: '📝 记录事件 — 点击放置，记录实验数据',
     sniffer: '👁 旁路探针 — 点击放置，0入0出独立监听信号源',
-    record_end: '⏹ 记录终止 — 点击放置，1进0出，记录后终止',
   };
 
   document.querySelectorAll('.palette-item').forEach(el => {
@@ -684,3 +719,4 @@ loadSignalSources();
 loadActuatorSources();          // D-30: 预加载执行器列表
 initPaletteTooltips();
 updateFlowEditorAccess();
+initializeFlowViewport();

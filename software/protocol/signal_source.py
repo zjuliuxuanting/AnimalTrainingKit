@@ -27,6 +27,7 @@ class SourceType(str, Enum):
     DEVICE = "device"
     TIMER = "timer"
     MOCK = "mock"
+    MANUAL = "manual"
 
 
 class SourceState(str, Enum):

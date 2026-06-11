@@ -19,7 +19,7 @@ from typing import Dict, Any, List, Optional
 PORT_SPEC: Dict[str, Dict[str, int]] = {
     "single": {"inputs": 1, "outputs": 1},     # 标准 1入1出
     "zero_in": {"inputs": 0, "outputs": 1},     # 无入边（START）
-    "zero_out": {"inputs": -1, "outputs": 0},   # 无出边，多入（END, RECORD_END）
+    "zero_out": {"inputs": -1, "outputs": 0},   # 无出边，多入（END）
     "multi_in": {"inputs": -1, "outputs": 1},   # 多入单出（TRIGGER, AND, DELAY, EXECUTE, RECORD）
     "bypass": {"inputs": 0, "outputs": 0},       # 旁路（SNIFFER）
 }
@@ -29,74 +29,102 @@ PORT_SPEC: Dict[str, Dict[str, int]] = {
 # 参数模板 — 字段名只在此定义一次
 # ============================================================================
 PARAM_TEMPLATES: Dict[str, Dict[str, Any]] = {
-    "duration_s": {
-        "type": "number", "min": 0.1, "max": 3600, "step": 0.1,
-        "default": 1.0, "unit": "秒", "required": True,
-        "help": "持续时间，单位秒",
+    "duration_value": {
+        "label": "等待数值",
+        "type": "number", "min": 0, "max": 1000, "step": 1,
+        "default": 1, "unit": "", "required": True,
+        "integer": True,
+        "help": "延时数值，整数，允许 0~1000",
+    },
+    "duration_unit": {
+        "label": "时间单位",
+        "type": "select",
+        "options": [
+            {"value": "seconds", "label": "秒"},
+            {"value": "minutes", "label": "分钟"},
+            {"value": "hours", "label": "小时"},
+        ],
+        "default": "seconds", "required": True,
+        "help": "延时时间单位",
     },
     "timeout_s": {
+        "label": "超时时间",
         "type": "number", "min": 1, "max": 3600, "step": 1,
         "default": 60, "unit": "秒", "required": True,
         "help": "超时时间，单位秒；0 表示不启用超时",
     },
     "signal_id": {
+        "label": "信号源",
         "type": "select", "options": "dynamic",
         "required": True,
         "help": "信号源 ID，从可用的摄像头区域/硬件传感器中选择",
     },
     "max_iterations": {
+        "label": "最大循环次数",
         "type": "number", "min": 1, "max": 10000,
         "default": 10, "required": True,
         "help": "最大循环次数",
     },
     "event_name": {
+        "label": "事件名称",
         "type": "text", "maxLength": 100,
         "required": True,
         "help": "事件名称",
     },
-    "counter_name": {
+    "variable_name": {
+        "label": "变量名称",
         "type": "text", "maxLength": 64,
         "required": False,
-        "help": "计数器名称，用于累积计数操作",
+        "help": "变量名称，例如 feeds_today、daily_quota_count",
     },
-    "counter_op": {
+    "variable_op": {
+        "label": "变量操作",
         "type": "select",
         "options": [
-            {"value": "+1", "label": "+1（递增）"},
-            {"value": "=0", "label": "=0（重置为零）"},
-            {"value": "=1", "label": "=1（重置为一）"},
-            {"value": "-1", "label": "-1（递减）"},
+            {"value": "add", "label": "加"},
+            {"value": "subtract", "label": "减"},
+            {"value": "set", "label": "设为"},
         ],
-        "default": "+1", "required": False,
-        "help": "计数器操作",
+        "default": "add", "required": False,
+        "help": "变量操作",
     },
-    "daily_quota_count": {
-        "type": "number", "min": 1, "max": 10000, "step": 1,
-        "default": 3, "unit": "次/颗", "required": False,
-        "help": "每日投喂上限，软件只按投喂次数/颗数计量",
+    "variable_value": {
+        "label": "变量数值",
+        "type": "number", "min": -999999, "max": 999999, "step": 1,
+        "default": 1, "required": False,
+        "integer": True,
+        "help": "变量操作数，整数，允许 0 和负数",
     },
-    "cooldown_s": {
-        "type": "number", "min": 0.1, "max": 86400, "step": 0.1,
-        "default": 72000, "unit": "秒", "required": False,
-        "help": "达到日额度后的冷却时长；验收可压缩为 20 秒",
+    "variable_persistent": {
+        "label": "是否持久状态",
+        "type": "checkbox",
+        "default": False, "required": False,
+        "help": "勾选后变量写入持久状态，服务重启后仍可读取",
     },
-    "state_op": {
+    "compare_source": {
+        "label": "比较对象",
         "type": "select",
         "options": [
-            {"value": "", "label": "不写持久状态"},
-            {"value": "feed_success", "label": "投喂成功：feeds_today +1"},
-            {"value": "start_cooldown", "label": "开始冷却：锁定额度"},
-            {"value": "new_day_reset", "label": "新日重置：清零并解锁"},
+            {"value": "value", "label": "固定数值"},
+            {"value": "variable", "label": "变量"},
         ],
-        "default": "", "required": False,
-        "help": "第5链路专用：RECORD 写入最小持久额度状态",
+        "default": "value", "required": False,
+        "help": "比较对象来源",
+    },
+    "compare_variable_name": {
+        "label": "比较变量名称",
+        "type": "text", "maxLength": 64,
+        "required": False,
+        "help": "当比较对象为变量时填写变量名称",
     },
     "actuator_id": {
+        "label": "执行器名称",
         "type": "select", "options": "dynamic",
         "required": True,
         "help": "执行器 ID，从注册中心加载",
     },
     "action": {
+        "label": "动作类型",
         "type": "select",
         "options": [
             {"value": "high", "label": "开启"},
@@ -106,6 +134,7 @@ PARAM_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "help": "动作类型",
     },
     "operator": {
+        "label": "判断条件",
         "type": "select",
         "options": [
             {"value": "eq", "label": "等于"},
@@ -119,24 +148,19 @@ PARAM_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "help": "比较运算符",
     },
     "source": {
+        "label": "数据来源",
         "type": "select",
         "options": [
             {"value": "trigger_count", "label": "TRIGGER 累计计数"},
-            {"value": "counter", "label": "指定计数器"},
-            {"value": "feeds_today", "label": "今日已投喂次数"},
-            {"value": "daily_quota_count", "label": "每日投喂上限"},
-            {"value": "quota_locked", "label": "额度冷却锁定中"},
-            {"value": "quota_available", "label": "今日额度仍可用"},
-            {"value": "quota_reached", "label": "今日额度已达上限"},
-            {"value": "cooldown_remaining_s", "label": "剩余冷却秒数"},
-            {"value": "day_index", "label": "压缩日序号"},
+            {"value": "variable", "label": "变量"},
         ],
         "default": "trigger_count", "required": True,
-        "help": "条件判断数据来源：TRIGGER 上游累计数、指定计数器或第5链路持久额度状态",
+        "help": "条件判断数据来源：TRIGGER 上游累计数或变量",
     },
     "value": {
-        "type": "number", "min": 0, "max": 999999,
-        "default": 0, "required": True,
+        "label": "判断值",
+        "type": "number", "min": -999999, "max": 999999,
+        "default": 0, "required": True, "integer": True,
         "help": "比较阈值",
     },
 }
@@ -171,16 +195,16 @@ NODE_SCHEMA: Dict[str, Dict[str, Any]] = {
         "label": "延时等待", "label_en": "Delay",
         "color": "#7C4DFF", "icon": "⏱",
         "ports": "multi_in",  # 多入1出（PORT-V2）
-        "params": ["duration_s"],
-        "help": "流程执行到此节点时暂停指定时长。默认 1 秒，范围 0.1 秒 ~ 1 小时。",
+        "params": ["duration_value", "duration_unit"],
+        "help": "流程执行到此节点时暂停指定时长。前端以整数数值 + 秒/分钟/小时配置。",
     },
     "condition": {
         "label": "条件判断", "label_en": "Condition",
         "color": "#5C6BC0", "icon": "🔀",
         "ports": {"inputs": 1, "outputs": 2,
                    "output_labels": ["真", "假"], "output_ports": ["true", "false"]},
-        "params": ["source", "operator", "value", "daily_quota_count"],
-        "help": "根据上游数据做条件判断。source 可读取 TRIGGER 累计数、计数器或第5链路持久额度状态。",
+        "params": ["source", "variable_name", "operator", "value", "compare_source", "compare_variable_name"],
+        "help": "根据上游数据做条件判断。可读取运行时变量和持久变量。",
     },
     "execute": {
         "label": "执行动作", "label_en": "Execute",
@@ -223,8 +247,8 @@ NODE_SCHEMA: Dict[str, Dict[str, Any]] = {
         "label": "记录事件", "label_en": "Record",
         "color": "#43A047", "icon": "📝",
         "ports": "multi_in",  # 多入1出（PORT-V2）
-        "params": ["event_name", "counter_name", "counter_op", "state_op", "daily_quota_count", "cooldown_s"],
-        "help": "记录实验事件。可选做运行时计数器操作；第5链路可写入最小持久额度状态。",
+        "params": ["event_name", "variable_name", "variable_op", "variable_value", "variable_persistent"],
+        "help": "记录实验事件，并可选执行变量写入。勾选持久状态后变量跨服务重启保留。",
     },
     "record_end": {
         "label": "记录终止", "label_en": "Record End",
@@ -244,10 +268,12 @@ NODE_SCHEMA: Dict[str, Dict[str, Any]] = {
 
 
 # 调色板显示顺序
+# 注：record_end 已于 Sprint v1.2.0 从新建面板下线（用 RECORD + END 组合替代）。
+# NODE_SCHEMA 仍保留 record_end 定义，仅用于旧流程加载时的迁移识别，不进面板。
 PALETTE_ORDER = [
     "trigger", "delay", "condition", "execute",
     "loop", "and", "not", "fork",
-    "record", "record_end", "sniffer",
+    "record", "sniffer",
 ]
 
 # 多入边豁免节点列表（PORT-V2：inputs=-1 的节点）

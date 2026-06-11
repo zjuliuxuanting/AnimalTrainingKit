@@ -105,10 +105,61 @@ async function boundaryViolations(page) {
   });
 }
 
+async function nodeOverlaps(page) {
+  return page.evaluate(() => {
+    const nodes = Array.from(document.querySelectorAll('#flowNodes .flow-node')).map((el) => {
+      const left = Number.parseFloat(el.style.left || '0');
+      const top = Number.parseFloat(el.style.top || '0');
+      return {
+        id: el.id,
+        left,
+        top,
+        right: left + el.offsetWidth,
+        bottom: top + el.offsetHeight,
+      };
+    });
+    const overlaps = [];
+    for (let i = 0; i < nodes.length; i += 1) {
+      for (let j = i + 1; j < nodes.length; j += 1) {
+        const a = nodes[i];
+        const b = nodes[j];
+        if (a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top) {
+          overlaps.push([a.id, b.id]);
+        }
+      }
+    }
+    return overlaps;
+  });
+}
+
 async function startNodeCount(page) {
   return page.evaluate(() => Array.from(document.querySelectorAll('#flowNodes .flow-node'))
     .filter((el) => el.querySelector('.node-body')?.textContent?.trim() === 'start')
     .length);
+}
+
+async function clickOffscreenNodeAndReadConfig(page, nodeText) {
+  const canvas = page.locator('#flowCanvas');
+  const before = await canvas.evaluate(el => ({
+    clientWidth: el.clientWidth,
+    scrollWidth: el.scrollWidth,
+    scrollLeft: el.scrollLeft,
+  }));
+  expect(before.scrollWidth, 'flow canvas should be horizontally scrollable').toBeGreaterThan(before.clientWidth);
+
+  const node = page.locator('#flowNodes .flow-node').filter({ hasText: nodeText }).first();
+  const canvasBox = await canvas.boundingBox();
+  expect(canvasBox).toBeTruthy();
+  await page.mouse.move(canvasBox.x + canvasBox.width / 2, canvasBox.y + canvasBox.height / 2);
+  await page.mouse.wheel(1200, 0);
+  await node.scrollIntoViewIfNeeded();
+
+  const nodeBox = await node.boundingBox();
+  expect(nodeBox).toBeTruthy();
+  await page.mouse.click(nodeBox.x + Math.min(70, nodeBox.width / 2), nodeBox.y + 18);
+  await expect(page.locator('#flowConfigPanel')).toBeVisible();
+  // v2.4 起节点类型不可编辑：自定义名称改存于 #cfgDisplayName（旧 #cfgLabel 已移除）
+  return page.locator('#cfgDisplayName').inputValue();
 }
 
 test('加载、新建、拖拽后的节点都不能越出流程画布', async ({ page }) => {
@@ -122,6 +173,7 @@ test('加载、新建、拖拽后的节点都不能越出流程画布', async ({
 
     await openExperimentEditor(page, expId);
     await expect.poll(() => boundaryViolations(page), { timeout: 5_000 }).toEqual([]);
+    await expect.poll(() => nodeOverlaps(page), { timeout: 5_000 }).toEqual([]);
     await expect.poll(() => startNodeCount(page), { timeout: 5_000 }).toBe(1);
 
     const recordPaletteItem = page.locator('.palette-item[data-type="record"]');
@@ -129,6 +181,7 @@ test('加载、新建、拖拽后的节点都不能越出流程画布', async ({
       await recordPaletteItem.click();
     }
     expect(await boundaryViolations(page)).toEqual([]);
+    expect(await nodeOverlaps(page)).toEqual([]);
     expect(await startNodeCount(page)).toBe(1);
 
     const conditionPaletteItem = page.locator('.palette-item[data-type="condition"]');
@@ -145,6 +198,10 @@ test('加载、新建、拖拽后的节点都不能越出流程画布', async ({
     await page.mouse.up();
 
     expect(await boundaryViolations(page)).toEqual([]);
+    expect(await startNodeCount(page)).toBe(1);
+
+    const selectedLabel = await clickOffscreenNodeAndReadConfig(page, '越界记录');
+    expect(selectedLabel).toBe('越界记录');
     expect(await startNodeCount(page)).toBe(1);
   } finally {
     await cleanupExperiment(page, expId);

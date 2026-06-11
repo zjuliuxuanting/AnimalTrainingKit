@@ -48,12 +48,6 @@ software/data/*.json
 # Archive
 /_存档/
 
-# Node / Playwright runtime
-/node_modules/
-/.playwright-mcp/
-/playwright-report/
-/test-results/
-
 # Project docs (version selected files only)
 /角色/
 /项目/
@@ -66,6 +60,10 @@ e2e/test-results/
 e2e/playwright-report/
 .agents/skills/local/
 /project_index.json
+
+# Playwright ad-hoc screenshots dumped to software root
+/software/test_pw_*.png
+/software/test_pw_*.html
 
 # Local-only management assets
 /.agents/

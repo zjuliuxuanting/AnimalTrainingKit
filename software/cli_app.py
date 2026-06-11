@@ -317,15 +317,14 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     engine_events: list = []
 
+    loop = asyncio.new_event_loop()
+
     def on_signal(event: SignalEvent):
         asyncio.run_coroutine_threadsafe(engine.feed_signal(event), loop)
 
     bus.set_on_signal(on_signal)
 
-    loop = asyncio.new_event_loop()
-
     async def run():
-        nonlocal loop
         await bus.start_all()
         await engine.start(session)
         start_ts = time.time()
@@ -358,7 +357,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
-def _on_engine_action(cmd: dict, session: Session, event_store: EventStore) -> bool:
+async def _on_engine_action(cmd: dict, session: Session, event_store: EventStore) -> bool:
     actuator_id = cmd.get("actuator_id", "")
     action = cmd.get("action", "")
     duration_ms = cmd.get("duration_ms", 0)

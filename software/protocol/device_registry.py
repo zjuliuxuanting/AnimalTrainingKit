@@ -190,21 +190,13 @@ class DeviceRegistry:
                         ))
 
     def register_builtin(self):
-        """注册内置信号源（Mock / Timer）"""
-        mock_signals = ["mock:trigger", "mock:timer", "mock:random"]
+        """注册实验人员主路径可用的内置能力。"""
         self.register(RegistryEntry(
-            source_id="mock:default",
-            display_name="模拟信号（调试用）",
+            source_id="manual:trigger",
+            display_name="手动触发",
             category=SourceCategory.SIGNAL,
-            source_type="mock",
-            produced_signals=mock_signals,
-        ))
-        self.register(RegistryEntry(
-            source_id="timer:system",
-            display_name="系统定时器",
-            category=SourceCategory.SIGNAL,
-            source_type="timer",
-            produced_signals=["timer:tick", "timer:elapsed_1s", "timer:elapsed_5s", "timer:elapsed_10s"],
+            source_type="manual",
+            produced_signals=["manual:trigger"],
         ))
         # 注册内置执行器
         self.register(RegistryEntry(

@@ -254,8 +254,8 @@ class TestBug7SignalIdValidation:
         # Should mention signal_id issue
 
     def test_valid_signal_id(self, client):
-        """mock:default 是有效的 signal_id → 校验通过"""
-        flow = _make_flow_with_signal_id("mock:default")
+        """manual:trigger 是用户主路径有效的 signal_id → 校验通过"""
+        flow = _make_flow_with_signal_id("manual:trigger")
         resp = client.post("/api/flows/validate", json=flow)
         data = resp.json()
         assert data["valid"] == True, f"应校验通过: {data}"
@@ -358,7 +358,7 @@ def _make_minimal_flow():
         "name": "测试流程",
         "nodes": {
             "n1": {"id": "n1", "node_type": "start", "label": "开始", "params": {}, "x": 100, "y": 100},
-            "n2": {"id": "n2", "node_type": "trigger", "label": "触发", "params": {"signal_id": "mock:default"}, "x": 250, "y": 100},
+            "n2": {"id": "n2", "node_type": "trigger", "label": "触发", "params": {"signal_id": "manual:trigger"}, "x": 250, "y": 100},
             "n3": {"id": "n3", "node_type": "end", "label": "结束", "params": {}, "x": 400, "y": 100},
         },
         "edges": [
@@ -399,7 +399,7 @@ def _make_flow_dict_with_start_as_target():
         "name": "START作为目标",
         "nodes": {
             "n1": {"id": "n1", "node_type": "start", "label": "开始", "params": {}, "x": 100, "y": 100},
-            "n2": {"id": "n2", "node_type": "trigger", "label": "触发", "params": {"signal_id": "mock:default"}, "x": 250, "y": 100},
+            "n2": {"id": "n2", "node_type": "trigger", "label": "触发", "params": {"signal_id": "manual:trigger"}, "x": 250, "y": 100},
         },
         "edges": [
             {"id": "e1", "source_node": "n2", "source_port": "out", "target_node": "n1", "target_port": "in", "condition": ""},
@@ -415,7 +415,7 @@ def _make_flow_dict_with_end_as_source():
         "nodes": {
             "n1": {"id": "n1", "node_type": "start", "label": "开始", "params": {}, "x": 100, "y": 100},
             "n2": {"id": "n2", "node_type": "end", "label": "结束", "params": {}, "x": 250, "y": 100},
-            "n3": {"id": "n3", "node_type": "trigger", "label": "触发", "params": {"signal_id": "mock:default"}, "x": 400, "y": 100},
+            "n3": {"id": "n3", "node_type": "trigger", "label": "触发", "params": {"signal_id": "manual:trigger"}, "x": 400, "y": 100},
         },
         "edges": [
             {"id": "e1", "source_node": "n1", "source_port": "out", "target_node": "n2", "target_port": "in", "condition": ""},
@@ -431,7 +431,7 @@ def _make_flow_dict_with_condition_one_output():
         "name": "CONDITION少一个输出",
         "nodes": {
             "n1": {"id": "n1", "node_type": "start", "label": "开始", "params": {}, "x": 100, "y": 100},
-            "n2": {"id": "n2", "node_type": "trigger", "label": "触发", "params": {"signal_id": "mock:default"}, "x": 250, "y": 100},
+            "n2": {"id": "n2", "node_type": "trigger", "label": "触发", "params": {"signal_id": "manual:trigger"}, "x": 250, "y": 100},
             "n3": {"id": "n3", "node_type": "condition", "label": "条件", "params": {"operator": "gt", "value": 5}, "x": 400, "y": 100},
             "n4": {"id": "n4", "node_type": "execute", "label": "执行", "params": {"actuator_id": "led1", "action": "pulse", "duration_s": 1}, "x": 550, "y": 100},
         },

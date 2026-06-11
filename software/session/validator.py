@@ -149,17 +149,32 @@ def _check_node_params(graph: FlowGraph) -> ValidationResult:
     result = ValidationResult()
     for node in graph.nodes.values():
         if node.node_type == NodeType.DELAY:
-            # Frontend Schema uses duration_s (seconds), range 0.1~3600
-            duration_s = node.params.get("duration_s")
-            if duration_s is None or duration_s == "":
+            duration_value = node.params.get("duration_value")
+            duration_unit = node.params.get("duration_unit", "seconds")
+            if "duration_s" in node.params:
                 result.add_error(
                     f"延时节点 [{node.id}] {node.label}："
-                    "duration_s 不能为空"
+                    "duration_s 已废弃，请使用 duration_value + duration_unit"
                 )
-            elif not isinstance(duration_s, (int, float)) or duration_s < 0.1 or duration_s > 3600:
+            if duration_value is None or duration_value == "":
                 result.add_error(
                     f"延时节点 [{node.id}] {node.label}："
-                    f"duration_s 需要 0.1~3600（秒）（当前 {duration_s}）"
+                    "duration_value 不能为空"
+                )
+            elif (
+                not isinstance(duration_value, int)
+                or isinstance(duration_value, bool)
+                or duration_value < 0
+                or duration_value > 1000
+            ):
+                result.add_error(
+                    f"延时节点 [{node.id}] {node.label}："
+                    f"duration_value 需要 0~1000 的整数（当前 {duration_value}）"
+                )
+            if duration_unit not in ("seconds", "minutes", "hours"):
+                result.add_error(
+                    f"延时节点 [{node.id}] {node.label}："
+                    f"duration_unit 必须为 seconds/minutes/hours（当前 {duration_unit}）"
                 )
         elif node.node_type == NodeType.EXECUTE:
             actuator_id = node.params.get("actuator_id", "")
@@ -182,43 +197,57 @@ def _check_node_params(graph: FlowGraph) -> ValidationResult:
                     "source（数据来源）不能为空"
                 )
             operator = node.params.get("operator", "")
-            if source not in (
-                "trigger_count",
-                "counter",
-                "feeds_today",
-                "daily_quota_count",
-                "quota_locked",
-                "quota_available",
-                "quota_reached",
-                "cooldown_remaining_s",
-                "day_index",
-            ):
+            if source not in ("trigger_count", "variable"):
                 result.add_error(
                     f"条件判断节点 [{node.id}] {node.label}："
                     f"无效的 source '{source}'"
                 )
+            if source == "variable":
+                variable_name = node.params.get("variable_name", "")
+                if not variable_name or not str(variable_name).strip():
+                    result.add_error(
+                        f"条件判断节点 [{node.id}] {node.label}："
+                        "variable_name 不能为空"
+                    )
             if operator not in ("eq", "neq", "gt", "lt", "gte", "lte"):
                 result.add_error(
                     f"条件判断节点 [{node.id}] {node.label}："
                     f"无效的 operator '{operator}'"
                 )
+            compare_source = node.params.get("compare_source", "value")
+            if compare_source not in ("value", "variable"):
+                result.add_error(
+                    f"条件判断节点 [{node.id}] {node.label}："
+                    f"无效的 compare_source '{compare_source}'"
+                )
+            if compare_source == "variable":
+                compare_variable_name = node.params.get("compare_variable_name", "")
+                if not compare_variable_name or not str(compare_variable_name).strip():
+                    result.add_error(
+                        f"条件判断节点 [{node.id}] {node.label}："
+                        "compare_variable_name 不能为空"
+                    )
             value = node.params.get("value")
-            if value is None or value == "":
+            if compare_source != "variable" and (value is None or value == ""):
                 result.add_error(
                     f"条件判断节点 [{node.id}] {node.label}："
                     "value（判断值）不能为空"
                 )
-            elif not isinstance(value, (int, float)) or value < 0 or value > 999999:
+            elif compare_source != "variable" and (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value < -999999
+                or value > 999999
+            ):
                 result.add_error(
                     f"条件判断节点 [{node.id}] {node.label}："
-                    f"value 需要 0~999999（当前 {value}）"
+                    f"value 需要 -999999~999999 的整数（当前 {value}）"
                 )
-            daily_quota_count = node.params.get("daily_quota_count")
-            if daily_quota_count not in (None, ""):
-                if not isinstance(daily_quota_count, (int, float)) or daily_quota_count < 1 or daily_quota_count > 10000:
+            for legacy_key in ("daily_quota_count", "cooldown_s", "state_op"):
+                if legacy_key in node.params:
                     result.add_error(
                         f"条件判断节点 [{node.id}] {node.label}："
-                        f"daily_quota_count 需要 1~10000（当前 {daily_quota_count}）"
+                        f"{legacy_key} 已废弃，请改用通用变量体系"
                     )
         elif node.node_type in (NodeType.RECORD, NodeType.RECORD_END):
             event_name = node.params.get("event_name")
@@ -227,31 +256,40 @@ def _check_node_params(graph: FlowGraph) -> ValidationResult:
                     f"记录节点 [{node.id}] {node.label}："
                     "event_name 不能为空"
                 )
-            counter_op = node.params.get("counter_op", "")
-            if counter_op and counter_op not in ("+1", "=0", "=1", "-1"):
-                result.add_error(
-                    f"记录节点 [{node.id}] {node.label}："
-                    f"无效的 counter_op '{counter_op}'"
-                )
-            state_op = node.params.get("state_op", "")
-            if state_op and state_op not in ("feed_success", "start_cooldown", "new_day_reset"):
-                result.add_error(
-                    f"记录节点 [{node.id}] {node.label}："
-                    f"无效的 state_op '{state_op}'"
-                )
-            daily_quota_count = node.params.get("daily_quota_count")
-            if daily_quota_count not in (None, ""):
-                if not isinstance(daily_quota_count, (int, float)) or daily_quota_count < 1 or daily_quota_count > 10000:
+            for legacy_key in ("counter_op", "state_op", "daily_quota_count", "cooldown_s"):
+                if legacy_key in node.params:
                     result.add_error(
                         f"记录节点 [{node.id}] {node.label}："
-                        f"daily_quota_count 需要 1~10000（当前 {daily_quota_count}）"
+                        f"{legacy_key} 已废弃，请改用 variable_name/variable_op/variable_value"
                     )
-            cooldown_s = node.params.get("cooldown_s")
-            if cooldown_s not in (None, ""):
-                if not isinstance(cooldown_s, (int, float)) or cooldown_s < 0.1 or cooldown_s > 86400:
+            variable_name = node.params.get("variable_name", "")
+            if variable_name and node.node_type == NodeType.RECORD_END:
+                result.add_error(
+                    f"记录终止节点 [{node.id}] {node.label}："
+                    "RECORD_END 只记录事件，不写变量"
+                )
+            if variable_name and node.node_type == NodeType.RECORD:
+                variable_op = node.params.get("variable_op", "add")
+                variable_value = node.params.get("variable_value", 0)
+                if variable_op not in ("add", "subtract", "set"):
                     result.add_error(
                         f"记录节点 [{node.id}] {node.label}："
-                        f"cooldown_s 需要 0.1~86400（秒）（当前 {cooldown_s}）"
+                        f"无效的 variable_op '{variable_op}'"
+                    )
+                if (
+                    not isinstance(variable_value, int)
+                    or isinstance(variable_value, bool)
+                    or variable_value < -999999
+                    or variable_value > 999999
+                ):
+                    result.add_error(
+                        f"记录节点 [{node.id}] {node.label}："
+                        f"variable_value 需要 -999999~999999 的整数（当前 {variable_value}）"
+                    )
+                if not isinstance(node.params.get("variable_persistent", False), bool):
+                    result.add_error(
+                        f"记录节点 [{node.id}] {node.label}："
+                        "variable_persistent 必须为布尔值"
                     )
         elif node.node_type == NodeType.TRIGGER:
             # D-17: simplified to only signal_id (string, required, non-empty)

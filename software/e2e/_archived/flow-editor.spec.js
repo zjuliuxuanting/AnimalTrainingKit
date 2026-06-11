@@ -3,6 +3,13 @@
  *
  * 覆盖流程编辑器的核心路径：
  * 页面加载 → 创建实验 → 查看流程编辑器 → 节点操作 → 保存恢复
+ *
+ * ⚠️ 已于 Sprint v1.2.0（2026-06-11）归档。
+ * 原因：本文件为 v1.1.3 时代的宽泛冒烟测试，使用过时选择器（#app、#palette），
+ * SPA 结构演进后这些选择器已不存在，3 条用例失败但产品 DOM 正常。
+ * 流程编辑器的真实回归已由 typical-links.spec.js / g3-cleanup-v120.spec.js /
+ * flow-viewport.spec.js / camera-monitor-preview.spec.js 覆盖。
+ * 若要恢复，需用现行选择器（#nodePalette 等）重写，再移回 e2e/ 根目录。
  */
 const { test, expect } = require('@playwright/test');
 
@@ -60,7 +67,7 @@ test.describe('行为学训练盒 — 流程编辑器', () => {
 
   test('4. 调色板中的节点可拖动到画布', async ({ page }) => {
     // 检查调色板/节点列表区域
-    const palette = page.locator('#palette, [class*="palette"], [class*="toolbar"], .node-palette').first();
+    const palette = page.locator('#nodePalette, #palette, [class*="palette"], [class*="toolbar"], .node-palette').first();
     await expect(palette).toBeVisible();
 
     // 验证调色板中有节点类型

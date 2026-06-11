@@ -23,6 +23,21 @@ from protocol.messages import EventKind
 
 logger = logging.getLogger("BehaviorBox.Engine")
 
+ACTUATOR_DISPLAY_NAMES = {
+    "actuator:feeder": "给食器（出粮器）",
+    "feeder": "给食器（出粮器）",
+    "actuator:shock": "电击器",
+    "shock": "电击器",
+    "actuator:light": "灯光",
+    "light": "灯光",
+    "actuator:buzzer": "蜂鸣器",
+    "buzzer": "蜂鸣器",
+}
+
+
+def actuator_display_name(actuator_id: str) -> str:
+    return ACTUATOR_DISPLAY_NAMES.get(actuator_id, actuator_id)
+
 
 class EngineState(str, Enum):
     IDLE = "idle"
@@ -115,8 +130,8 @@ class Engine:
         self._send_action: Optional[Callable[[Dict[str, Any]], Awaitable[bool]]] = None
         self._on_engine_event: Optional[Callable[[str, Dict[str, Any]], None]] = None
         self._on_state_change: Optional[Callable[[EngineState, EngineState], None]] = None
-        self._quota_state_store = None
-        self._quota_scope_id: str = ""
+        self._variable_state_store = None
+        self._variable_scope_id: str = ""
 
         # LOOP body 深度计数器（支持嵌套循环）
         self._loop_body_depth: int = 0
@@ -144,9 +159,9 @@ class Engine:
     def set_on_state_change(self, cb: Callable[[EngineState, EngineState], None]):
         self._on_state_change = cb
 
-    def set_quota_state_store(self, store, scope_id: str):
-        self._quota_state_store = store
-        self._quota_scope_id = scope_id or ""
+    def set_variable_state_store(self, store, scope_id: str):
+        self._variable_state_store = store
+        self._variable_scope_id = scope_id or ""
 
     def _set_state(self, new_state: EngineState):
         old = self._state
@@ -495,7 +510,7 @@ class Engine:
             self._ctx._executed_nodes.add(node.id)
 
     async def _execute_delay(self, node: FlowNode):
-        duration_s = node.params.get("duration_s", 1.0)
+        duration_s = self._duration_to_seconds(node.params)
         ms = duration_s * 1000.0
         logger.info(f"延时 {duration_s}秒 ({ms}ms): [{node.id}]")
         # A5 fix: 在 sleep 前记录延时开始事件，确保 DELAY 和 END 时间戳差 >= duration_s
@@ -507,28 +522,15 @@ class Engine:
     async def _execute_condition(self, node: FlowNode):
         source = node.params.get("source", "trigger_count")
         operator = node.params.get("operator", "eq")
-        expected_value = node.params.get("value", 0)
+        compare_source = node.params.get("compare_source", "value")
+        if compare_source == "variable":
+            expected_value = self._get_flow_variable(node.params.get("compare_variable_name", ""), default=0)
+        else:
+            expected_value = node.params.get("value", 0)
 
         # Resolve actual value from the chosen data source
-        if source == "counter":
-            counter_name = node.params.get("counter_name", "default")
-            actual_value = self._ctx.counters.get(counter_name, 0)
-        elif source in (
-            "feeds_today",
-            "daily_quota_count",
-            "quota_locked",
-            "quota_available",
-            "quota_reached",
-            "cooldown_remaining_s",
-            "day_index",
-        ):
-            if not self._quota_state_store:
-                raise RuntimeError(f"条件判断需要持久配额状态，但未配置状态仓库: source={source}")
-            actual_value = self._quota_state_store.get_value(
-                self._quota_scope_id,
-                source,
-                daily_quota_count=node.params.get("daily_quota_count"),
-            )
+        if source == "variable":
+            actual_value = self._get_flow_variable(node.params.get("variable_name", ""), default=0)
         else:
             # trigger_count: 全局触发计数器（所有 TRIGGER 节点匹配时递增）
             actual_value = self._ctx.counters.get("trigger_count", 0)
@@ -559,24 +561,12 @@ class Engine:
             "node_id": node.id,
             "type": "condition",
             "source": source,
+            "variable_name": node.params.get("variable_name", "") if source == "variable" else "",
             "actual_value": actual_value,
             "expected_value": expected_value,
             "operator": operator,
             "result": result,
         }
-        if source in (
-            "feeds_today",
-            "daily_quota_count",
-            "quota_locked",
-            "quota_available",
-            "quota_reached",
-            "cooldown_remaining_s",
-            "day_index",
-        ) and self._quota_state_store:
-            event_data["quota_state"] = self._quota_state_store.get_state(
-                self._quota_scope_id,
-                daily_quota_count=node.params.get("daily_quota_count"),
-            )
 
         self._emit_engine_event("node_executed", event_data)
 
@@ -611,6 +601,7 @@ class Engine:
             "node_id": node.id,
             "type": "execute",
             "actuator_id": actuator_id,
+            "actuator_label": actuator_display_name(actuator_id),
             "action": action,
             "success": success,
         })
@@ -740,42 +731,70 @@ class Engine:
             **{k: self._ctx.get_variable(k) for k in node.params.get("variables", [])},
         }
 
-        # 计数器操作（如果配置了 counter_name 和 counter_op）
-        counter_name = node.params.get("counter_name", "")
-        counter_op = node.params.get("counter_op", "")
-        if counter_name and counter_op:
-            if counter_op == "+1":
-                self._ctx.counters[counter_name] = self._ctx.counters.get(counter_name, 0) + 1
-            elif counter_op == "=0":
-                self._ctx.counters[counter_name] = 0
-            elif counter_op == "=1":
-                self._ctx.counters[counter_name] = 1
-            elif counter_op == "-1":
-                self._ctx.counters[counter_name] = self._ctx.counters.get(counter_name, 0) - 1
-            data["counter_name"] = counter_name
-            data["counter_op"] = counter_op
-            data["counter_value"] = self._ctx.counters[counter_name]
-
-        state_op = node.params.get("state_op", "")
-        if state_op:
-            if not self._quota_state_store:
-                raise RuntimeError(f"记录节点需要持久配额状态，但未配置状态仓库: state_op={state_op}")
-            quota_state = self._quota_state_store.apply_record_op(
-                self._quota_scope_id,
-                state_op,
-                daily_quota_count=node.params.get("daily_quota_count"),
-                cooldown_s=node.params.get("cooldown_s"),
-            )
-            data["state_op"] = state_op
-            data["quota_state"] = quota_state
+        variable_update = self._apply_record_variable_op(node)
+        if variable_update:
+            data.update(variable_update)
 
         self._ctx.session._record_event(event_name, data)
         event_data = {"node_id": node.id, "type": "record", "event_name": event_name}
-        if "state_op" in data:
-            event_data["state_op"] = data["state_op"]
-            event_data["quota_state"] = data["quota_state"]
+        if variable_update:
+            event_data.update(variable_update)
         self._emit_engine_event("node_executed", event_data)
         await self._step_to_next(node)
+
+    def _duration_to_seconds(self, params: Dict[str, Any]) -> float:
+        if "duration_value" not in params and "duration_s" in params:
+            return float(params.get("duration_s") or 0)
+        value = int(params.get("duration_value", 1) or 0)
+        unit = params.get("duration_unit", "seconds")
+        if unit == "hours":
+            return float(value * 3600)
+        if unit == "minutes":
+            return float(value * 60)
+        return float(value)
+
+    def _get_flow_variable(self, variable_name: str, default: int = 0) -> int:
+        name = (variable_name or "").strip()
+        if not name:
+            return int(default)
+        if self._ctx and name in self._ctx.variables:
+            try:
+                return int(self._ctx.variables[name])
+            except (TypeError, ValueError):
+                return int(default)
+        if self._variable_state_store:
+            return int(self._variable_state_store.get_value(self._variable_scope_id, name, default=default))
+        return int(default)
+
+    def _apply_record_variable_op(self, node: FlowNode) -> Dict[str, Any]:
+        variable_name = (node.params.get("variable_name", "") or "").strip()
+        if not variable_name:
+            return {}
+        variable_op = node.params.get("variable_op", "add")
+        variable_value = int(node.params.get("variable_value", 0) or 0)
+        persistent = bool(node.params.get("variable_persistent", False))
+        current = self._get_flow_variable(variable_name, default=0)
+        if variable_op == "add":
+            new_value = current + variable_value
+        elif variable_op == "subtract":
+            new_value = current - variable_value
+        elif variable_op == "set":
+            new_value = variable_value
+        else:
+            raise ValueError(f"unknown variable op: {variable_op}")
+
+        if persistent:
+            if not self._variable_state_store:
+                raise RuntimeError(f"记录节点需要持久变量状态，但未配置状态仓库: variable={variable_name}")
+            new_value = self._variable_state_store.set_value(self._variable_scope_id, variable_name, new_value)
+        self._ctx.set_variable(variable_name, int(new_value))
+        return {
+            "variable_name": variable_name,
+            "variable_op": variable_op,
+            "variable_value": variable_value,
+            "variable_result": int(new_value),
+            "variable_persistent": persistent,
+        }
 
     async def _execute_and(self, node: FlowNode, incoming_edge: Edge):
         """AND 节点：所有输入端口都收到信号后才触发输出。
@@ -859,22 +878,6 @@ class Engine:
             "ts_ms": int(time.time() * 1000),
             **{k: self._ctx.get_variable(k) for k in node.params.get("variables", [])},
         }
-
-        # 计数器操作（如果配置了 counter_name 和 counter_op）
-        counter_name = node.params.get("counter_name", "")
-        counter_op = node.params.get("counter_op", "")
-        if counter_name and counter_op:
-            if counter_op == "+1":
-                self._ctx.counters[counter_name] = self._ctx.counters.get(counter_name, 0) + 1
-            elif counter_op == "=0":
-                self._ctx.counters[counter_name] = 0
-            elif counter_op == "=1":
-                self._ctx.counters[counter_name] = 1
-            elif counter_op == "-1":
-                self._ctx.counters[counter_name] = self._ctx.counters.get(counter_name, 0) - 1
-            data["counter_name"] = counter_name
-            data["counter_op"] = counter_op
-            data["counter_value"] = self._ctx.counters[counter_name]
 
         self._ctx.session._record_event(event_name, data)
         self._emit_engine_event("node_executed", {

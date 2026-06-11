@@ -32,15 +32,15 @@ import uvicorn
 
 from contextlib import asynccontextmanager
 
-from protocol.signal_source import MockSignalSource, TimerSource, SignalEvent
+from protocol.signal_source import SignalEvent, SourceType
 from protocol.signal_bus import SignalBus
 from session.session import Session, ExperimentConfig
-from session.flow_model import FlowGraph
+from session.flow_model import FlowGraph, _migrate_record_end
 from session.engine import Engine
 from session.validator import validate_flow
 from data.database import Database
 from data.event_store import EventStore
-from data.quota_state import QuotaStateStore
+from data.variable_state import VariableStateStore
 from data.processor import DataProcessor
 from data.export import export_session_csv
 from data.experiment_manager import set_experiments_root, create_experiment, list_experiments, get_experiment, update_experiment, delete_experiment, batch_delete_experiments, get_all_camera_statuses, clone_experiment, save_flow, load_flow
@@ -50,7 +50,7 @@ DEFAULT_PORT = 8000
 
 db: Optional[Database] = None
 event_store: Optional[EventStore] = None
-quota_state_store: Optional[QuotaStateStore] = None
+variable_state_store: Optional[VariableStateStore] = None
 bus: Optional[SignalBus] = None
 engine: Optional[Engine] = None
 session: Optional[Session] = None
@@ -58,13 +58,14 @@ _loop: Optional[asyncio.AbstractEventLoop] = None
 ws_clients: set = set()
 _mutex = asyncio.Lock()
 _experiment_active = False
+_active_experiment_id = ""
 _mock_device_mgr = None
 _camera_config_path = os.path.join(PROJECT_ROOT, "data_store", "camera_config.json")
 
 
 @asynccontextmanager
 async def lifespan(app_instance):
-    global db, event_store, quota_state_store, _loop
+    global db, event_store, variable_state_store, _loop
     _loop = asyncio.get_event_loop()
     db_dir = os.path.join(PROJECT_ROOT, "data_store")
     old_db_dir = os.path.join(PROJECT_ROOT, "data")
@@ -74,7 +75,7 @@ async def lifespan(app_instance):
     db = Database(os.path.join(db_dir, "behavior_box.db"))
     db.open()
     event_store = EventStore(db)
-    quota_state_store = QuotaStateStore(db)
+    variable_state_store = VariableStateStore(db)
     set_experiments_root(os.path.join(PROJECT_ROOT, "data_store", "experiments"))
     yield
     if engine:
@@ -175,7 +176,7 @@ async def api_status():
 
 @app.post("/api/experiment/start-mock")
 async def api_start_mock(data: dict = None, count: int = 10, subject_id: str = "", exp_name: str = "", notes: str = "", max_duration_min: int = 0, experiment_id: str = ""):
-    global bus, engine, session, _experiment_active
+    global bus, engine, session, _experiment_active, _active_experiment_id
     if data:
         count = data.get("count", count)
         subject_id = data.get("subject_id", subject_id)
@@ -231,16 +232,13 @@ async def api_start_mock(data: dict = None, count: int = 10, subject_id: str = "
                 motion=MotionConfig(enabled=True, threshold=25, min_area=500),
             )
             b.register(cam)
-        else:
-            b.register(MockSignalSource("mock:0", event_interval_ms=1500))
-        b.register(TimerSource("timer:0", tick_interval_ms=1000))
 
         e = Engine()
 
         def _on_signal(sig):
             event_store.append_event(
                 session_id=s.id,
-                event_type=f"{sig.source_type.value}_{sig.signal_id.split(':')[-1]}" if sig.source_type.value != "mock" else "manual_trigger",
+                event_type=f"{sig.source_type.value}_{sig.signal_id.split(':')[-1]}",
                 ts_ms=sig.ts_ms,
                 signal_id=f"{sig.source_id}:{sig.signal_id}",
                 raw_payload={"value": sig.value, "data": sig.data},
@@ -253,7 +251,7 @@ async def api_start_mock(data: dict = None, count: int = 10, subject_id: str = "
         b.set_on_signal(_on_signal)
 
         async def run():
-            global _experiment_active
+            global _experiment_active, _active_experiment_id
             try:
                 await b.start_all()
                 s.start()
@@ -280,8 +278,10 @@ async def api_start_mock(data: dict = None, count: int = 10, subject_id: str = "
                 logger.exception(f"实验运行异常: {exc}")
             finally:
                 _experiment_active = False
+                _active_experiment_id = ""
 
         _experiment_active = True
+        _active_experiment_id = experiment_id
         asyncio.create_task(run())
         session = s
         engine = e
@@ -291,8 +291,9 @@ async def api_start_mock(data: dict = None, count: int = 10, subject_id: str = "
 
 @app.post("/api/experiment/stop")
 async def api_stop():
-    global engine, bus, session, _experiment_active
+    global engine, bus, session, _experiment_active, _active_experiment_id
     _experiment_active = False
+    _active_experiment_id = ""
     if engine:
         await engine.stop()
     if session:
@@ -311,6 +312,7 @@ async def api_experiment_state():
         "engine": "running" if _experiment_active else "idle",
         "session": session.state.value if session else "none",
         "session_id": session.id if session else "",
+        "experiment_id": _active_experiment_id,
     }
 
 
@@ -420,7 +422,7 @@ async def api_validate_flow(data: dict):
 
 @app.post("/api/experiment/run-flow")
 async def api_run_flow(data: dict):
-    global bus, engine, session, _experiment_active
+    global bus, engine, session, _experiment_active, _active_experiment_id
     flow_data = data.get("flow", {})
     experiment_id = data.get("experiment_id", "")
 
@@ -477,7 +479,7 @@ async def api_run_flow(data: dict):
         }, ensure_ascii=False), experiment_id=experiment_id)
 
         e = Engine()
-        e.set_quota_state_store(quota_state_store, experiment_id or safe_name)
+        e.set_variable_state_store(variable_state_store, experiment_id or safe_name)
         e.set_send_action(lambda cmd: _on_action(cmd, s))
         e.set_on_engine_event(lambda kind, data: _on_engine_evt(kind, data, s))
 
@@ -491,9 +493,6 @@ async def api_run_flow(data: dict):
                 motion=MotionConfig(enabled=True, threshold=25, min_area=500),
             )
             b.register(cam)
-        else:
-            b.register(MockSignalSource("mock:0", event_interval_ms=1500))
-        b.register(TimerSource("timer:0", tick_interval_ms=1000))
 
         collected_signals = []
 
@@ -515,7 +514,7 @@ async def api_run_flow(data: dict):
         b.set_on_signal(_on_signal)
 
         async def run():
-            global _experiment_active
+            global _experiment_active, _active_experiment_id
             try:
                 await b.start_all()
                 await e.start(s)
@@ -546,8 +545,10 @@ async def api_run_flow(data: dict):
                 logger.exception(f"流程实验异常: {exc}")
             finally:
                 _experiment_active = False
+                _active_experiment_id = ""
 
         _experiment_active = True
+        _active_experiment_id = experiment_id
         asyncio.create_task(run())
         session = s
         engine = e
@@ -566,7 +567,7 @@ async def _on_action(cmd: dict, s: Session) -> bool:
 
 
 def _on_engine_evt(kind: str, data: dict, s: Session):
-    event_store.append_event(
+    event_id = event_store.append_event(
         session_id=s.id, event_type=kind, ts_ms=int(time.time() * 1000),
         node_id=data.get("node_id", ""), signal_id=data.get("signal_id", ""),
         raw_payload=data,
@@ -580,6 +581,7 @@ def _on_engine_evt(kind: str, data: dict, s: Session):
             "kind": kind,
             "data": data,
             "session_id": s.id,
+            "event_id": event_id,
         }))
     except RuntimeError:
         # 没有运行中的 event loop（理论上不会发生，但防御性处理）
@@ -618,6 +620,45 @@ async def api_device_disconnect():
     return {"ok": True}
 
 
+@app.post("/api/experiment/manual-trigger")
+async def api_manual_trigger(data: dict = None):
+    """运行监控页的人工测试入口：产生正式 manual:trigger 信号并驱动流程。"""
+    payload = data or {}
+    experiment_id = payload.get("experiment_id", "")
+    ts = int(payload.get("ts") or time.time() * 1000)
+    if not engine or not engine.is_running or not session or not _experiment_active:
+        raise HTTPException(400, "当前没有正在运行的流程实验")
+    if experiment_id and _active_experiment_id and experiment_id != _active_experiment_id:
+        raise HTTPException(409, "手动触发目标实验与当前运行实验不一致")
+
+    sig = SignalEvent(
+        source_id="manual:control",
+        source_type=SourceType.MANUAL,
+        signal_id="manual:trigger",
+        ts_ms=ts,
+        value=1,
+        data={"label": "手动触发", "experiment_id": _active_experiment_id or experiment_id},
+    )
+    if event_store:
+        event_store.append_event(
+            session_id=session.id,
+            event_type="manual_trigger",
+            ts_ms=ts,
+            signal_id=sig.signal_id,
+            raw_payload=sig.data,
+        )
+    await engine.feed_signal(sig)
+    await broadcast({
+        "type": "manual_trigger",
+        "session_id": session.id,
+        "experiment_id": _active_experiment_id or experiment_id,
+        "signal_id": sig.signal_id,
+        "label": "手动触发",
+        "ts": ts,
+    })
+    return {"ok": True, "session_id": session.id, "signal_id": sig.signal_id}
+
+
 @app.post("/api/experiment/camera-event")
 async def api_camera_event(data: dict):
     zone = data.get("zone", "未知区域")
@@ -635,8 +676,9 @@ async def api_camera_event(data: dict):
             signal_id=signal_id,
             raw_payload={"zone": zone, "event": event, "experiment_id": experiment_id},
         )
-    if engine and engine.is_running and _loop:
-        from protocol.signal_source import SignalEvent, SourceType
+    fed_to_flow = False
+    target_matches = (not experiment_id) or (not _active_experiment_id) or experiment_id == _active_experiment_id
+    if engine and engine.is_running and target_matches:
         sig = SignalEvent(
             source_id="camera:0",
             source_type=SourceType.CAMERA,
@@ -645,8 +687,19 @@ async def api_camera_event(data: dict):
             value=1 if event == "enter" else 0,
             data={"zone": zone, "event": event, "experiment_id": experiment_id},
         )
-        asyncio.run_coroutine_threadsafe(engine.feed_signal(sig), _loop)
-    return {"ok": True}
+        await engine.feed_signal(sig)
+        fed_to_flow = True
+    await broadcast({
+        "type": "camera_event",
+        "session_id": session.id if session else "",
+        "experiment_id": experiment_id,
+        "zone": zone,
+        "event": event,
+        "signal_id": signal_id,
+        "fed_to_flow": fed_to_flow,
+        "ts": ts,
+    })
+    return {"ok": True, "fed_to_flow": fed_to_flow}
 
 
 # === 实验管理 API ===
@@ -778,7 +831,9 @@ async def api_load_experiment_flow(exp_id: str):
     if flow is None:
         # 返回空流程（含默认 START/END），不报错
         return {"nodes": {}, "edges": []}
-    return flow
+    # Sprint v1.2.0: 旧流程含 RECORD_END 时在加载边界迁移为 RECORD + END，
+    # 保证编辑器打开旧 flow 不出现已下线的 record_end 节点。
+    return _migrate_record_end(flow)
 
 
 # === 目录选择器 ===
@@ -915,7 +970,7 @@ def _get_available_sources(experiment_id: str | None = None) -> list[dict]:
     """获取可用信号源列表（从注册中心读取，供校验器和 API 共用）
 
     D-30: 统一从注册中心读取，不再硬编码。支持：
-    - 内置 mock/timer 信号源
+    - 内置手动触发信号
     - 摄像头 zone 自动注册的信号源
     - 硬件设备注册的信号源
     """
@@ -931,10 +986,17 @@ def _get_available_sources(experiment_id: str | None = None) -> list[dict]:
 
     entries = reg.get_all_sources(eid)
     result = []
+    seen = set()
     for e in entries:
-        result.append({"id": e.source_id, "label": e.display_name, "type": e.source_type})
-        for sig in e.produced_signals:
-            result.append({"id": sig, "label": f"{e.display_name}:{sig}", "type": e.source_type})
+        if e.source_type in {"mock", "timer"} or e.source_id.startswith(("mock:", "timer:")):
+            continue
+        source_ids = [e.source_id, *e.produced_signals]
+        for sig in source_ids:
+            if sig in seen or sig.startswith(("mock:", "timer:")):
+                continue
+            seen.add(sig)
+            label = e.display_name if sig == e.source_id else f"{e.display_name}:{sig}"
+            result.append({"id": sig, "label": label, "type": e.source_type})
     return result
 
 
@@ -958,7 +1020,7 @@ async def api_registry_sources(experiment_id: str = None):
         "source_type": e.source_type,
         "status": e.status.value,
         "produced_signals": e.produced_signals,
-    } for e in reg.get_all_sources(experiment_id or "")]}
+    } for e in reg.get_all_sources(experiment_id or "") if e.source_type not in {"mock", "timer"}]}
 
 
 @app.get("/api/registry/actuators")

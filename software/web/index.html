@@ -6,7 +6,7 @@
 <title>行为学训练盒</title>
 <link rel="stylesheet" href="/static/css/style.css">
 </head>
-<body>
+<body class="kids-ui">
 
 <div class="toast" id="toastContainer"></div>
 
@@ -17,6 +17,11 @@
 
 <style>
 @keyframes spin { to { transform:rotate(360deg) } }
+.flow-node.flow-node-runtime { outline:3px solid #FF9800; outline-offset:3px; }
+@media (max-width: 1080px) {
+  #flowViewportToolbar .btn { min-height:32px; }
+  #flowZoomBadge { margin-left:0 !important; text-align:left !important; }
+}
 </style>
 
 <nav class="navbar">
@@ -184,7 +189,7 @@
     </div>
     <p style="margin-top:8px;color:var(--text-secondary);font-size:12px">💡 从左侧拖拽节点到画布，连接节点来编排实验流程。开始和结束节点已固定在画布上。</p>
   </div>
-  <div class="grid-3" style="grid-template-columns: 140px 1fr 300px; gap: 12px;position:relative">
+  <div class="grid-3" style="grid-template-columns: 140px minmax(360px, 1fr) 300px; gap: 12px;position:relative">
     <!-- 左侧：节点面板 -->
     <div class="card" style="padding:8px">
       <h3 style="font-size:12px;margin-bottom:8px">节点面板</h3>
@@ -201,7 +206,6 @@
         <div class="palette-group-label" style="font-size:10px;color:#999;padding:8px 0 2px 0;text-transform:uppercase;letter-spacing:0.5px">动作执行</div>
         <div class="palette-item" data-type="execute">🛠 执行动作</div>
         <div class="palette-item" data-type="record">📝 记录事件</div>
-        <div class="palette-item" data-type="record_end">⏹ 记录终止</div>
         <!-- LOGIC group (grey) -->
         <div class="palette-group-label" style="font-size:10px;color:#999;padding:8px 0 2px 0;text-transform:uppercase;letter-spacing:0.5px">逻辑运算</div>
         <div class="palette-item" data-type="and">📦 逻辑与</div>
@@ -214,6 +218,14 @@
     </div>
     <!-- 中间：画布 -->
     <div class="card" style="padding:0;overflow:hidden">
+      <div id="flowViewportToolbar" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px;border-bottom:1px solid var(--border);background:#fff">
+        <button class="btn btn-sm" id="btnFlowFit" onclick="fitFlowToView()" title="将当前流程缩放到画布内">回到全局</button>
+        <button class="btn btn-sm" id="btnFlowZoom75" onclick="setFlowZoom75()" title="缩放到 75%">75%</button>
+        <button class="btn btn-sm" id="btnFlowZoom100" onclick="resetFlowZoom()" title="缩放到 100%">100%</button>
+        <button class="btn btn-sm" id="btnFlowLocateSelected" onclick="locateSelectedFlowNode()" title="定位当前选中节点">定位选中</button>
+        <button class="btn btn-sm btn-primary" id="btnFlowAutoLayout" onclick="autoLayoutFlow()" title="按主链路从左到右整理">整理流程</button>
+        <span id="flowZoomBadge" style="margin-left:auto;color:var(--text-secondary);font-size:12px;min-width:52px;text-align:right">100%</span>
+      </div>
       <div id="flowCanvas" style="width:100%;height:500px;position:relative;background:#fafafa;border:1px solid var(--border);border-radius:6px;overflow:auto">
         <div id="flowWorkspace" style="position:relative;width:2200px;height:760px;min-width:100%;min-height:100%">
           <svg id="flowSvg" style="width:100%;height:100%;position:absolute;top:0;left:0;pointer-events:none"></svg>
@@ -226,8 +238,12 @@
       <h3 style="font-size:14px;margin:0 0 12px 0">节点参数设置</h3>
       <div id="flowConfigForm">
         <div class="form-group">
-          <label>节点名称</label>
-          <input id="cfgLabel" onchange="updateNodeConfig()">
+          <label>节点类型</label>
+          <input id="cfgNodeType" readonly style="background:#F5F5F5;color:var(--text-secondary);cursor:not-allowed">
+        </div>
+        <div class="form-group">
+          <label>显示名称（可选）</label>
+          <input id="cfgDisplayName" placeholder="例：亮灯提示、记录奖励次数" onchange="updateNodeConfig()" oninput="updateNodeConfig()">
         </div>
         <div class="form-group" id="cfgExtra"></div>
       </div>
@@ -251,8 +267,19 @@
       <div class="label">状态</div>
     </div>
   </div>
-  <div style="margin-top:12px;text-align:center">
+  <div style="margin-top:12px;text-align:center;display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
+    <button class="btn btn-primary" id="btnManualTrigger" onclick="manualTrigger()" disabled style="padding:8px 24px;font-size:14px">手动触发</button>
     <button class="btn btn-danger" id="btnStop" onclick="stopExperiment()" disabled style="padding:8px 24px;font-size:14px">⏹ 停止实验</button>
+  </div>
+  <!-- 运行监控只读摄像头预览（仅启用了摄像头的实验显示） -->
+  <div class="card" id="monitorCameraCard" style="display:none">
+    <h3>摄像头实时画面（只读）</h3>
+    <div id="monitorCameraStatus" style="font-size:13px;color:var(--text-secondary);margin-bottom:8px">正在准备预览…</div>
+    <div style="position:relative;display:inline-block;max-width:100%">
+      <video id="monitorCamVideo" autoplay playsinline muted style="display:none"></video>
+      <canvas id="monitorCamCanvas" width="640" height="480" style="max-width:100%;border-radius:8px;background:#000;max-height:400px"></canvas>
+    </div>
+    <div style="font-size:12px;color:var(--text-secondary);margin-top:6px">此处仅用于观察，不能修改检测区域。区域配置请在「摄像头」标签页完成。</div>
   </div>
   <div class="card">
     <h3>实时事件日志</h3>
@@ -519,11 +546,12 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-<script src="/static/js/flow-model.js?v=7"></script>
-<script src="/static/js/flow-canvas.js?v=7"></script>
-<script src="/static/js/flow-editor.js?v=7"></script>
-<script src="/static/js/app.js?v=7"></script>
+<script src="/static/js/flow-model.js?v=10"></script>
+<script src="/static/js/flow-canvas.js?v=8"></script>
+<script src="/static/js/flow-editor.js?v=10"></script>
+<script src="/static/js/app.js?v=10"></script>
 <script src="/static/js/charts.js?v=3"></script>
-<script src="/static/js/camera.js?v=5"></script>
+<script src="/static/js/camera.js?v=6"></script>
+<script src="/static/js/monitor-camera.js?v=1"></script>
 </body>
 </html>

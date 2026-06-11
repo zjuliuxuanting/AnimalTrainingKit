@@ -1951,6 +1951,7 @@ async function startCameraDetection() {
           const enterRule = findEventRuleName(z.name, 'enter');
           if (enterRule) logCam(`📌 [触发规则] 已触发「${enterRule}」`, '');
           toast(`${z.name}: 检测到动物进入`, 'info');
+          if (typeof flashMonitorZone === 'function') flashMonitorZone(z.name);
           fetch('/api/experiment/camera-event', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ zone: z.name, event: 'enter', ts: Date.now(), experiment_id: currentExperimentId, pos_x: best ? best.cx : null, pos_y: best ? best.cy : null }),
