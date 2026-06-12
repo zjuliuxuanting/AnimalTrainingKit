@@ -349,10 +349,7 @@ async function createExperiment() {
   const maxDuration = durationUnlimited ? 0 : (parseInt(document.getElementById('expDuration').value) || 0);
   const maxTriggers = triggersUnlimited ? 0 : (parseInt(document.getElementById('expMaxTriggers').value) || 0);
 
-  if (maxDuration === 0 && maxTriggers === 0) {
-    toast('最长运行时间和最大触发次数不能同时为0或不限（实验永不自动停止）', 'warn');
-    return;
-  }
+  // 0 = 不限。两者同时不限表示实验运行到手动停止，这是允许的语义，不再拦截。
 
   const startMode = document.querySelector('input[name="startModeGroup"]:checked').value;
   let timerConfig = {};

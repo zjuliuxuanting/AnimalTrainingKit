@@ -423,10 +423,6 @@ document.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     const id = getNodeId(nodeEl);
     if (!id) return;
-    if (flowNodes[id] && flowNodes[id].fixed) {
-      toast('开始和结束节点不可删除', 'warn');
-      return;
-    }
     flowEdges = flowEdges.filter(ed => ed.source !== id && ed.target !== id);
     delete flowNodes[id];
     nodeEl.remove();
@@ -628,6 +624,10 @@ async function loadFlow() {
 
 async function validateFlow() {
   const data = getFlowData();
+  // 带上当前实验 ID，让校验加载该实验的摄像头 zone 信号源，避免误报"信号源不存在"
+  if (typeof currentExperimentId !== 'undefined' && currentExperimentId) {
+    data.experiment_id = currentExperimentId;
+  }
   try {
     const result = await api('/api/flows/validate', {
       method: 'POST', body: JSON.stringify(data),

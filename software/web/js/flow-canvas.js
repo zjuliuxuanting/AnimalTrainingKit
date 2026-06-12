@@ -779,6 +779,15 @@ function updateSvg() {
       path.setAttribute('stroke-width', '3');
     }
     path.setAttribute('data-edge-id', edge.id);
+    // Bug-1: 直接在 path 上绑定右键删除，不依赖 document 冒泡（SVG target 可能不是 path 本身）
+    path.addEventListener('contextmenu', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      flowEdges = flowEdges.filter(ed => ed.id !== edge.id);
+      if (selectedEdgeId === edge.id) selectedEdgeId = null;
+      saveHistory();
+      updateSvg();
+    });
     svg.appendChild(path);
   }
 }
@@ -828,34 +837,24 @@ function initFixedNodes() {
   const hasStart = Object.values(flowNodes).some(n => n.type === 'start');
   const hasEnd = Object.values(flowNodes).some(n => n.type === 'end');
 
-  // START node — fixed top-left (0 inputs, 1 output)
+  // START node — top-left (0 inputs, 1 output). Bug-3: 不再标记 fixed，可拖可删
   if (!hasStart && !flowNodes['start_0']) {
     const startEl = createNodeEl('start', '开始', {});
     startEl.id = 'node_start_0';
-    startEl.setAttribute('data-fixed', 'true');
-    startEl.style.opacity = '0.85';
-    flowNodes['start_0'] = { el: startEl, type: 'start', label: '开始', params: {}, fixed: true };
+    flowNodes['start_0'] = { el: startEl, type: 'start', label: '开始', params: {}, fixed: false };
     document.getElementById('flowNodes').appendChild(startEl);
+    makeDraggable(startEl, 'start_0');
     placeNodeWithinCanvas(startEl, 16, 16);
   }
 
-  // END node — fixed bottom-right (>=1 inputs, 0 outputs)
+  // END node — bottom-right (>=1 inputs, 0 outputs). Bug-3: 不再标记 fixed，可拖可删
   if (!hasEnd && !flowNodes['end_0']) {
     const endEl = createNodeEl('end', '结束', {});
     endEl.id = 'node_end_0';
-    endEl.setAttribute('data-fixed', 'true');
-    endEl.style.opacity = '0.85';
-    flowNodes['end_0'] = { el: endEl, type: 'end', label: '结束', params: {}, fixed: true };
+    flowNodes['end_0'] = { el: endEl, type: 'end', label: '结束', params: {}, fixed: false };
     document.getElementById('flowNodes').appendChild(endEl);
+    makeDraggable(endEl, 'end_0');
     const visible = getVisibleCanvasSize();
     placeNodeWithinCanvas(endEl, visible.width - 156, visible.height - 76);
-  }
-
-  // Defense: force-correct fixed status on any START/END that arrived with fixed=false
-  for (const [id, n] of Object.entries(flowNodes)) {
-    if ((n.type === 'start' || n.type === 'end') && !n.fixed) {
-      n.fixed = true;
-      n.el.setAttribute('data-fixed', 'true');
-    }
   }
 }

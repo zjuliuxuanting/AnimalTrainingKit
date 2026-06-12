@@ -194,8 +194,12 @@
     <div class="card" style="padding:8px">
       <h3 style="font-size:12px;margin-bottom:8px">节点面板</h3>
       <div id="nodePalette">
+        <!-- 固定节点 -->
+        <div class="palette-group-label" style="font-size:10px;color:#999;padding:4px 0 2px 0;text-transform:uppercase;letter-spacing:0.5px">流程起止</div>
+        <div class="palette-item" data-type="start">🔴 开始</div>
+        <div class="palette-item" data-type="end">⏹ 结束</div>
         <!-- TRIGGER group (orange) -->
-        <div class="palette-group-label" style="font-size:10px;color:#999;padding:4px 0 2px 0;text-transform:uppercase;letter-spacing:0.5px">信号输入</div>
+        <div class="palette-group-label" style="font-size:10px;color:#999;padding:8px 0 2px 0;text-transform:uppercase;letter-spacing:0.5px">信号输入</div>
         <div class="palette-item" data-type="trigger">⚡ 触发信号</div>
         <!-- CONTROL group (purple/blue) -->
         <div class="palette-group-label" style="font-size:10px;color:#999;padding:8px 0 2px 0;text-transform:uppercase;letter-spacing:0.5px">流程控制</div>
@@ -546,12 +550,12 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-<script src="/static/js/flow-model.js?v=10"></script>
-<script src="/static/js/flow-canvas.js?v=8"></script>
-<script src="/static/js/flow-editor.js?v=10"></script>
-<script src="/static/js/app.js?v=10"></script>
+<script src="/static/js/flow-model.js?v=11"></script>
+<script src="/static/js/flow-canvas.js?v=9"></script>
+<script src="/static/js/flow-editor.js?v=12"></script>
+<script src="/static/js/app.js?v=11"></script>
 <script src="/static/js/charts.js?v=3"></script>
-<script src="/static/js/camera.js?v=6"></script>
-<script src="/static/js/monitor-camera.js?v=1"></script>
+<script src="/static/js/camera.js?v=7"></script>
+<script src="/static/js/monitor-camera.js?v=2"></script>
 </body>
 </html>

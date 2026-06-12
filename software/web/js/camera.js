@@ -802,7 +802,7 @@ function closePolygon() {
     color: ZONE_COLORS[idx % ZONE_COLORS.length],
     events: {
       enter: { enabled: true, role: 'trigger' },
-      leave: { enabled: true, role: 'trigger' },
+      leave: { enabled: false, role: 'trigger' },
       accumulate: { enabled: false, n: 5, role: 'trigger' },
       dwell: { enabled: false, seconds: 3, role: 'trigger' },
     },
@@ -818,7 +818,7 @@ function getZoneEvents(idx) {
   if (!zones[idx].events) {
     zones[idx].events = {
       enter: { enabled: true, role: 'trigger' },
-      leave: { enabled: true, role: 'trigger' },
+      leave: { enabled: false, role: 'trigger' },
       accumulate: { enabled: false, n: 5, role: 'trigger' },
       dwell: { enabled: false, seconds: 3, role: 'trigger' },
     };
@@ -1067,7 +1067,7 @@ async function saveCameraConfig() {
       points: z.points,
       events: z.events || {
         enter: { enabled: true, role: 'trigger' },
-        leave: { enabled: true, role: 'trigger' },
+        leave: { enabled: false, role: 'trigger' },
         accumulate: { enabled: false, n: 5, role: 'trigger' },
         dwell: { enabled: false, seconds: 3, role: 'trigger' }
       }
@@ -1113,7 +1113,7 @@ async function loadCameraConfig() {
         color: ZONE_COLORS[i % ZONE_COLORS.length],
         events: z.events || {
           enter: { enabled: true, role: 'trigger' },
-          leave: { enabled: true, role: 'trigger' },
+          leave: { enabled: false, role: 'trigger' },
           accumulate: { enabled: false, n: 5, role: 'trigger' },
           dwell: { enabled: false, seconds: 3, role: 'trigger' }
         }
@@ -1718,6 +1718,11 @@ async function startTrackPreview() {
 
       if (best) {
         detectCount++;
+        // Bug-2: 把最新检测结果写入全局，供运行监控只读预览复用（不另开摄像头/不另跑检测）
+        window._monitorDetectResult = {
+          best: { cx: best.cx, cy: best.cy, minX: best.minX, maxX: best.maxX, minY: best.minY, maxY: best.maxY, count: best.count },
+          ts: Date.now(),
+        };
         offCtx.strokeStyle = '#FFD700'; offCtx.lineWidth = 2;
         offCtx.strokeRect(best.minX, best.minY, best.maxX - best.minX, best.maxY - best.minY);
         offCtx.fillStyle = '#FFD700';
@@ -1730,6 +1735,7 @@ async function startTrackPreview() {
           `✅ 检测到动物 | 位置(${best.cx.toFixed(0)}, ${best.cy.toFixed(0)}) | 面积 ${best.count} px² | 第 ${detectCount} 帧`;
         document.getElementById('camTrackStatus').style.color = '#4CAF50';
       } else {
+        window._monitorDetectResult = { best: null, ts: Date.now() };
         document.getElementById('camTrackStatus').textContent =
           `👀 暂未检测到动物 | 可以调整灵敏度或确保动物在画面中 | 第 ${detectCount} 帧`;
         document.getElementById('camTrackStatus').style.color = '#FF9800';

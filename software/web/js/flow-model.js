@@ -347,7 +347,7 @@ const NODE_SCHEMAS = {
 };
 
 // Palette display order
-const PALETTE_ORDER = ['trigger', 'delay', 'condition', 'execute', 'loop', 'and', 'not', 'fork', 'record', 'sniffer'];
+const PALETTE_ORDER = ['start', 'end', 'trigger', 'delay', 'condition', 'execute', 'loop', 'and', 'not', 'fork', 'record', 'sniffer'];
 
 // ============================================================================
 // State
@@ -602,7 +602,6 @@ function loadFlowData(data) {
       }
       const n = createNodeEl(nd.node_type, displayLabel, params);
       n.id = 'node_' + id;
-      const isFixed = nd.node_type === 'start' || nd.node_type === 'end';
       if (nd.node_type === 'start') {
         document.getElementById('flowNodes').appendChild(n);
         placeNodeAtAvailablePosition(n, Number(nd.x ?? 16), Number(nd.y ?? 16));
@@ -614,8 +613,8 @@ function loadFlowData(data) {
         document.getElementById('flowNodes').appendChild(n);
         placeNodeAtAvailablePosition(n, Number(nd.x ?? 100), Number(nd.y ?? 100));
       }
-      flowNodes[id] = { el: n, type: nd.node_type, label: getCanonicalNodeLabel(nd.node_type), params, fixed: isFixed };
-      if (isFixed) n.setAttribute('data-fixed', 'true');
+      // Bug-3: START/END 不再 fixed，可拖可删，和普通节点一致
+      flowNodes[id] = { el: n, type: nd.node_type, label: getCanonicalNodeLabel(nd.node_type), params, fixed: false };
       makeDraggable(n, id);
       const idx = parseInt(id.split('_')[1]) || 0;
       if (idx > nodeIdCounter) nodeIdCounter = idx;
@@ -651,13 +650,7 @@ function debugState(verbose = false) {
     if (ids.has(el.id)) issues.push(`重复DOM ID: ${el.id}`);
     ids.add(el.id);
   }
-  // 3. START/END always fixed:true
-  for (const [id, n] of Object.entries(flowNodes)) {
-    if ((n.type === 'start' || n.type === 'end') && !n.fixed) {
-      issues.push(`START/END 节点 ${id} fixed=false`);
-    }
-  }
-  // 4. All edge source/target point to valid nodes
+  // 3. All edge source/target point to valid nodes
   for (const edge of flowEdges) {
     if (!flowNodes[edge.source]) issues.push(`边 ${edge.id} source=${edge.source} 不存在`);
     if (!flowNodes[edge.target]) issues.push(`边 ${edge.id} target=${edge.target} 不存在`);

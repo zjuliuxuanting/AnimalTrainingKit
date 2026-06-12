@@ -14,8 +14,7 @@
 (function () {
   'use strict';
 
-  // 监控预览本地状态（与 camera.js 的 zones/cameraStream 隔离，避免互相污染）
-  let monStream = null;
+  // 监控预览本地状态（zone 隔离；视频流复用 camera.js 的 cameraStream，不另开摄像头）
   let monRAF = null;
   let monZones = [];
   let monActive = false;
@@ -29,6 +28,14 @@
   const MON_COLORS = (typeof ZONE_COLORS !== 'undefined' && ZONE_COLORS) || ['#FF9800', '#4CAF50', '#2196F3', '#E91E63', '#9C27B0'];
 
   function $(id) { return document.getElementById(id); }
+
+  // 复用 camera.js 第7步检测打开的摄像头流，绝不另开一路
+  function getSharedStream() {
+    if (typeof cameraStream !== 'undefined' && cameraStream && cameraStream.active) return cameraStream;
+    const bg = $('camPreviewBg');
+    if (bg && bg.srcObject && bg.srcObject.active) return bg.srcObject;
+    return null;
+  }
 
   function setStatus(text) {
     const el = $('monitorCameraStatus');
@@ -105,14 +112,28 @@
       ctx.fillText(label, p0.x + 6, p0.y - 18);
     });
 
+    // Bug-2: 叠加 camera.js 检测循环写入的全局检测结果（蓝色轮廓 + 质心）
+    const det = window._monitorDetectResult;
+    if (det && det.best && (now - det.ts) < 500) {
+      const b = det.best;
+      ctx.strokeStyle = '#2196F3';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(b.minX, b.minY, b.maxX - b.minX, b.maxY - b.minY);
+      ctx.fillStyle = '#2196F3';
+      ctx.beginPath();
+      ctx.arc(b.cx, b.cy, 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
     if (monActive) monRAF = requestAnimationFrame(drawMonitorFrame);
   }
 
   function refreshStatusText() {
     if (!monActive) return;
     let txt;
-    if (!monStream || !monStream.active) {
-      txt = '⚠ 无画面：未获取到摄像头视频流';
+    const stream = getSharedStream();
+    if (!stream || !stream.active) {
+      txt = '⚠ 无画面：请先在第7步开始检测';
     } else {
       txt = '● 画面正常';
       if (monLastZone && (Date.now() - monLastZoneTs) < 5000) {
@@ -146,20 +167,18 @@
 
     card.style.display = 'block';
     monActive = true;
-    setStatus('正在打开摄像头…');
+    setStatus('正在加载画面…');
 
+    // Bug-2: 复用 camera.js 检测时打开的摄像头流，不再独立 getUserMedia
     const video = $('monitorCamVideo');
-    try {
-      monStream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 640 }, height: { ideal: 480 } },
-        audio: false,
-      });
-      video.srcObject = monStream;
-      await video.play();
+    const stream = getSharedStream();
+    if (stream && video) {
+      if (video.srcObject !== stream) video.srcObject = stream;
+      try { await video.play(); } catch (e) { /* 自动播放限制忽略 */ }
       refreshStatusText();
-    } catch (e) {
-      // 摄像头被占用或无权限：仍显示 zone 叠加（黑底），给出提示
-      setStatus('⚠ 无画面：摄像头不可用或被占用，仅显示区域示意');
+    } else {
+      // 检测未开始：只画 zone 叠加并提示
+      setStatus('⚠ 无画面：请先在第7步开始检测');
     }
 
     if (monRAF) cancelAnimationFrame(monRAF);
@@ -177,10 +196,7 @@
       clearInterval(startMonitorCameraPreview._statusTimer);
       startMonitorCameraPreview._statusTimer = null;
     }
-    if (monStream) {
-      monStream.getTracks().forEach(t => t.stop());
-      monStream = null;
-    }
+    // 不停止共享流（归 camera.js 管理），只解绑本视频元素
     const video = $('monitorCamVideo');
     if (video) video.srcObject = null;
     monZones = [];

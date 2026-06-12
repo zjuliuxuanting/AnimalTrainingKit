@@ -176,18 +176,7 @@ class DeviceRegistry:
                                     experiment_id=eid,
                                     metadata={"zone": name, "event": event_type, "role": role},
                                 ))
-            elif not event_rules:
-                for event_type in ["enter", "leave"]:
-                    source_id = f"camera:{name}:{event_type}"
-                    if source_id not in self._entries:
-                        self.register(RegistryEntry(
-                            source_id=source_id,
-                            display_name=f"摄像头 - {name} - {event_type}",
-                            category=SourceCategory.SIGNAL,
-                            source_type="camera_zone",
-                            produced_signals=[source_id],
-                            experiment_id=eid,
-                        ))
+            # 无 events 配置 → 不注册任何事件，不兜底（避免误注册 enter+leave）
 
     def register_builtin(self):
         """注册实验人员主路径可用的内置能力。"""

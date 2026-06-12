@@ -186,8 +186,8 @@ async def api_start_mock(data: dict = None, count: int = 10, subject_id: str = "
         experiment_id = data.get("experiment_id", experiment_id)
     use_camera_source = data.get("use_camera_source", False) if data else False
     camera_index = data.get("camera_index", 0) if data else 0
-    if count < 1 and max_duration_min < 1:
-        raise HTTPException(400, "触发次数和运行时间至少有一个必须大于 0")
+    # 0 = 不限。count 与 max_duration_min 同时为 0 表示运行到手动停止，是合法语义。
+    unlimited = count < 1 and max_duration_min < 1
     async with _mutex:
         if _experiment_active:
             raise HTTPException(400, "实验正在运行中，请先停止")
@@ -258,13 +258,16 @@ async def api_start_mock(data: dict = None, count: int = 10, subject_id: str = "
                 start_ts = time.time()
                 deadline = start_ts + duration_s
                 max_events = count if count > 0 else float('inf')
-                while time.time() < deadline:
+                while unlimited or time.time() < deadline:
                     await asyncio.sleep(0.1)
+                    if not _experiment_active:
+                        logger.info("实验被手动停止")
+                        break
                     event_count = len(event_store.get_events(s.id))
                     if event_count >= max_events:
                         logger.info(f"达到最大触发次数 {int(max_events)}，停止")
                         break
-                    if time.time() >= deadline:
+                    if not unlimited and time.time() >= deadline:
                         break
                 await b.stop_all()
                 s.stop()
@@ -411,9 +414,12 @@ async def api_load_flow(filename: str):
 @app.post("/api/flows/validate")
 async def api_validate_flow(data: dict):
     try:
+        # Bug: 校验必须和实际运行用同一套信号源。带上 experiment_id 才能
+        # 加载该实验的 camera.json，否则 camera zone 信号源不在可用列表里导致误报。
+        experiment_id = data.get("experiment_id") or _active_experiment_id
         flow = FlowGraph.from_dict(data)
         # Gather available signal IDs for semantic validation (Bug #7)
-        available_signals = [s["id"] for s in _get_available_sources()]
+        available_signals = [s["id"] for s in _get_available_sources(experiment_id)]
         result = validate_flow(flow, available_signals=available_signals)
         return {"valid": result.valid, "errors": result.errors, "warnings": result.warnings}
     except Exception as e:
