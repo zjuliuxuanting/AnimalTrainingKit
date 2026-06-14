@@ -272,6 +272,7 @@
     </div>
   </div>
   <div style="margin-top:12px;text-align:center;display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
+    <button class="btn btn-success" id="btnMonitorRun" onclick="monitorRunFlow()" disabled style="padding:8px 24px;font-size:14px">▶ 运行流程</button>
     <button class="btn btn-primary" id="btnManualTrigger" onclick="manualTrigger()" disabled style="padding:8px 24px;font-size:14px">手动触发</button>
     <button class="btn btn-danger" id="btnStop" onclick="stopExperiment()" disabled style="padding:8px 24px;font-size:14px">⏹ 停止实验</button>
   </div>
@@ -284,6 +285,7 @@
       <canvas id="monitorCamCanvas" width="640" height="480" style="max-width:100%;border-radius:8px;background:#000;max-height:400px"></canvas>
     </div>
     <div style="font-size:12px;color:var(--text-secondary);margin-top:6px">此处仅用于观察，不能修改检测区域。区域配置请在「摄像头」标签页完成。</div>
+    <details style="margin-top:8px"><summary style="font-size:13px;cursor:pointer;color:var(--text-secondary)">检测事件日志</summary><div class="event-log" id="monitorEventLog" style="max-height:200px;margin-top:4px"></div></details>
   </div>
   <div class="card">
     <h3>实时事件日志</h3>
@@ -341,7 +343,7 @@
     <p style="color:var(--text-secondary);font-size:13px;margin-bottom:8px">请选择一个已连接的 USB 摄像头</p>
     <div class="flex">
       <select id="camSelect" style="flex:1;padding:8px;border:1px solid var(--border);border-radius:6px">
-        <option value="">-- 正在检测摄像头 --</option>
+        <option value="">-- 请点击刷新检测摄像头 --</option>
       </select>
       <button class="btn btn-sm btn-primary" onclick="refreshCameraList()">🔄 刷新</button>
     </div>
@@ -448,10 +450,10 @@
       <div class="form-group">
         <label>对象大小范围（像素面积）</label>
         <div style="display:flex;gap:4px;align-items:center">
-          <input type="range" id="camObjSizeMin" style="flex:1" oninput="document.getElementById('camObjSizeMinVal').textContent=this.value">
+          <input type="range" id="camObjSizeMin" min="10" max="307200" value="100" style="flex:1" oninput="document.getElementById('camObjSizeMinVal').textContent=this.value">
           <span id="camObjSizeMinVal" style="font-size:11px;min-width:20px">100</span>
           <span style="font-size:11px;color:var(--text-secondary)">—</span>
-          <input type="range" id="camObjSizeMax" style="flex:1" oninput="document.getElementById('camObjSizeMaxVal').textContent=this.value">
+          <input type="range" id="camObjSizeMax" min="100" max="307200" value="5000" style="flex:1" oninput="document.getElementById('camObjSizeMaxVal').textContent=this.value">
           <span id="camObjSizeMaxVal" style="font-size:11px;min-width:28px">5000</span>
         </div>
         <span id="camObjSizeInfo" style="font-size:10px;color:var(--text-secondary);margin-top:2px;display:block">启动摄像头预览后根据实际分辨率自动调整范围</span>
@@ -551,11 +553,12 @@
 
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <script src="/static/js/flow-model.js?v=11"></script>
-<script src="/static/js/flow-canvas.js?v=9"></script>
-<script src="/static/js/flow-editor.js?v=12"></script>
-<script src="/static/js/app.js?v=11"></script>
+<script src="/static/js/flow-canvas.js?v=11"></script>
+<script src="/static/js/flow-editor.js?v=13"></script>
+<script src="/static/js/app.js?v=20"></script>
 <script src="/static/js/charts.js?v=3"></script>
-<script src="/static/js/camera.js?v=7"></script>
-<script src="/static/js/monitor-camera.js?v=2"></script>
+<script src="/static/js/detection.js?v=1"></script>
+<script src="/static/js/camera.js?v=19"></script>
+<script src="/static/js/monitor-camera.js?v=12"></script>
 </body>
 </html>

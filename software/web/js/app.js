@@ -157,7 +157,7 @@ function renderMonitorEventOnce(event) {
   } else if (kind === 'loop_iteration') {
     markEngineNode(event.node_id || data.node_id);
     log('🔄 循环 第' + (data.iteration || '?') + '次', 'info');
-  } else if (kind === 'manual_trigger') {
+  } else if (kind === 'manual') {
     log('手动触发已记录', 'success');
   } else if (kind && kind.startsWith('camera_')) {
     const eventLabel = data.event === 'leave' ? '离开' : (data.event === 'enter' ? '进入' : (data.event || '事件'));
@@ -180,6 +180,15 @@ function setBtnStop(disabled) {
   const btn = document.getElementById('btnStop');
   if (btn) btn.disabled = disabled;
   setManualTriggerButton(disabled);
+  // 运行流程按钮：运行中禁用，停止后根据实验是否选中决定
+  const runBtn = document.getElementById('btnMonitorRun');
+  if (runBtn) {
+    if (!disabled) {
+      runBtn.disabled = true;  // 正在运行
+    } else {
+      runBtn.disabled = !currentExperimentId;  // 有实验才能运行
+    }
+  }
 }
 
 function setManualTriggerButton(disabled) {
@@ -203,7 +212,7 @@ function connectWS() {
       }
       setBtnStop(true);
       renderExperimentList();
-    } else if (msg.type === 'manual_trigger') {
+    } else if (msg.type === 'manual') {
       log('手动触发已发送', 'success');
     } else if (msg.type === 'camera_event') {
       if (msg.fed_to_flow) {
@@ -243,12 +252,22 @@ document.querySelectorAll('.tab').forEach(tab => {
       toast('请先在实验管理中「编辑」或「启动」一个启用了摄像头的实验', 'warn');
       return;
     }
+    // 首次进入摄像头 tab 时才枚举设备（避免页面加载时弹权限）
+    if (tab.dataset.tab === 'camera' && typeof window._triggerCameraInit === 'function') {
+      window._triggerCameraInit();
+    }
     // 流程标签页无实验时拦截点击（与摄像头标签页一致）
     if (tab.dataset.tab === 'flow' && tab.classList.contains('tab-disabled')) {
       toast('请先在实验管理中「编辑」一个实验', 'warn');
       return;
     }
     if (tab.dataset.tab !== 'camera' && typeof releaseCamera === 'function') {
+      // 切走摄像头标签前检查是否有未保存的配置
+      if (typeof window.isCameraConfigDirty === 'function' && window.isCameraConfigDirty()) {
+        if (!confirm('摄像头配置已修改但未保存，是否放弃更改？')) {
+          return;
+        }
+      }
       releaseCamera();
     }
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -582,6 +601,8 @@ async function enterExperiment(expId) {
       toast('该实验未启用摄像头，已切换到流程编辑器', 'info');
     }
     renderExperimentList();
+    const monRunBtn = document.getElementById('btnMonitorRun');
+    if (monRunBtn) monRunBtn.disabled = false;
   } catch (e) {
     toast('进入实验失败: ' + e.message, 'error');
   }
@@ -591,7 +612,9 @@ async function startExpRun(expId) {
   const exp = await api(`/api/experiments/${expId}`);
   toast(`正在启动实验: ${exp.name}`, 'info');
   log(`启动实验: ${exp.name} (${exp.subject_id})`, 'info');
-  setBtnStop(false);
+  
+  // 设置当前实验 ID（与流程编辑器/运行监控保持一致）
+  currentExperimentId = expId;
   const count = exp.max_trigger_count || 0;
 
   const badge = document.getElementById('currentExpBadge');
@@ -604,7 +627,6 @@ async function startExpRun(expId) {
     if (typeof setCameraExperiment === 'function') {
       setCameraExperiment(expId, exp.name, true);
     }
-    toast('实验已启动，如需摄像头检测请切换到摄像头标签页手动开始', 'info');
   } else {
     if (typeof setCameraExperiment === 'function') {
       setCameraExperiment(expId, exp.name, false);
@@ -612,13 +634,62 @@ async function startExpRun(expId) {
   }
 
   try {
-    const result = await api(`/api/experiment/start-mock?count=${count}&subject_id=${encodeURIComponent(exp.subject_id)}&exp_name=${encodeURIComponent(exp.name)}&notes=${encodeURIComponent(exp.notes || '')}&max_duration_min=${exp.max_duration_min || 0}&experiment_id=${encodeURIComponent(expId)}`, { method: 'POST' });
-    toast(`实验已启动`, 'success');
-    log(`实验已启动`, 'success');
+    // 检查实验是否有流程，选择正确的启动方式
+    let result;
+    const hasFlow = exp.has_flow || false;
+    
+    if (hasFlow) {
+      // 有流程：先加载流程到画布
+      if (typeof loadFlowFromExperiment === 'function') {
+        await loadFlowFromExperiment(expId);
+      }
+      
+      // 使用 run-flow 启动（与 monitorRunFlow 逻辑一致）
+      const maxDur = parseInt(exp.max_duration_min || 0);
+      const duration = maxDur > 0 ? Math.min(86400, maxDur * 60) : 86400;
+      const maxTriggers = parseInt(exp.max_trigger_count || 0);
+      
+      result = await api('/api/experiment/run-flow', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          experiment_id: expId, 
+          duration, 
+          max_trigger_count: maxTriggers,
+          subject_id: exp.subject_id,
+          exp_name: exp.name
+        }),
+      });
+      toast('✅ 流程实验已启动', 'success');
+      log('流程实验已启动', 'success');
+    } else {
+      // 无流程：使用 start-mock 启动
+      setBtnStop(false);
+      result = await api(`/api/experiment/start-mock?count=${count}&subject_id=${encodeURIComponent(exp.subject_id)}&exp_name=${encodeURIComponent(exp.name)}&notes=${encodeURIComponent(exp.notes || '')}&max_duration_min=${exp.max_duration_min || 0}&experiment_id=${encodeURIComponent(expId)}`, { method: 'POST' });
+      toast('✅ 手动实验已启动', 'success');
+      log('手动实验已启动', 'success');
+    }
+    
     startMonitorPoll(result.session_id);
+    
+    // 启动成功后跳转到运行监控标签页
+    document.querySelector('[data-tab="monitor"]').click();
+    
+    // 如果有摄像头，启动监控摄像头预览
+    if (exp.trigger_camera && typeof startMonitorCameraPreview === 'function') {
+      try {
+        startMonitorCameraPreview(expId, true);
+      } catch (e) {
+        console.warn('启动监控摄像头预览失败:', e);
+      }
+    }
   } catch (e) {
     toast('启动失败: ' + e.message, 'error');
-    setBtnStop(true);
+    if (e.message && e.message.includes('正在运行')) {
+      setBtnStop(false);
+    } else {
+      setBtnStop(true);
+    }
   }
 }
 
@@ -705,9 +776,7 @@ async function deleteExperiment(expId) {
 async function stopExperiment() {
   toast('正在停止实验...', 'warn');
   log('正在停止实验...', 'warn');
-  if (typeof stopCameraDetection === 'function') {
-    stopCameraDetection();
-  }
+  // 不停 cameraDetection — 检测循环是信号源，用户在摄像头页手动控制启停
   if (typeof stopMonitorCameraPreview === 'function') {
     stopMonitorCameraPreview();
   }
@@ -822,13 +891,15 @@ async function runFlow() {
     toast('✅ 流程已保存，正在启动实验...', 'success');
 
     const expInfo = await api(`/api/experiments/${currentExperimentId}`);
-    const duration = Math.max(1, Math.min(86400, (parseInt(expInfo.max_duration_min || 0) || 1) * 60));
+    const maxDur = parseInt(expInfo.max_duration_min || 0);
+    const duration = maxDur > 0 ? Math.min(86400, maxDur * 60) : 86400;
+    const maxTriggers = parseInt(expInfo.max_trigger_count || 0);
 
     // Step 2: Start the experiment
     const runResult = await api('/api/experiment/run-flow', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ experiment_id: currentExperimentId, duration }),
+      body: JSON.stringify({ experiment_id: currentExperimentId, duration, max_trigger_count: maxTriggers }),
     });
 
     setBtnStop(false);
@@ -846,7 +917,12 @@ async function runFlow() {
   } catch (e) {
     toast('❌ 运行失败：' + e.message, 'error');
     log('运行失败: ' + e.message, 'error');
-    setBtnStop(true);
+    // 如果后端说"正在运行中"，停止按钮必须保持可点击
+    if (e.message && e.message.includes('正在运行')) {
+      setBtnStop(false);
+    } else {
+      setBtnStop(true);
+    }
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = origText; }
   }
@@ -918,3 +994,56 @@ renderExperimentList();
     // 服务不可用时静默失败
   }
 })();
+
+// 需求1: 运行监控页"运行流程"按钮 — validate→save→run 一体化
+async function monitorRunFlow() {
+  const btn = document.getElementById('btnMonitorRun');
+  if (!currentExperimentId) {
+    toast('请先在实验列表中选择一个实验', 'warn');
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = '校验中...'; }
+  try {
+    // Step 1: 加载并校验当前流程
+    const flowResp = await api(`/api/experiments/${currentExperimentId}/flow/load`);
+    const validateResp = await api('/api/flows/validate', {
+      method: 'POST',
+      body: JSON.stringify({ ...flowResp, experiment_id: currentExperimentId }),
+    });
+    if (!validateResp.valid) {
+      const errs = (validateResp.errors || []).join('\n');
+      toast('流程校验失败，请先在流程编辑器中修正：\n' + errs, 'error');
+      log('流程校验失败: ' + errs, 'error');
+      if (btn) { btn.disabled = false; btn.textContent = '▶ 运行流程'; }
+      return;
+    }
+    if (btn) btn.textContent = '启动中...';
+    // Step 2: 获取实验配置并启动
+    const expInfo = await api(`/api/experiments/${currentExperimentId}`);
+    const maxDur = parseInt(expInfo.max_duration_min || 0);
+    const duration = maxDur > 0 ? Math.min(86400, maxDur * 60) : 86400;
+    const maxTriggers = parseInt(expInfo.max_trigger_count || 0);
+    const runResult = await api('/api/experiment/run-flow', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ experiment_id: currentExperimentId, duration, max_trigger_count: maxTriggers }),
+    });
+    setBtnStop(false);
+    toast('✅ 实验已从监控页启动', 'success');
+    log('实验已启动', 'info');
+    startMonitorPoll(runResult.session_id);
+    if (typeof startMonitorCameraPreview === 'function') {
+      try {
+        startMonitorCameraPreview(currentExperimentId, !!expInfo.trigger_camera);
+      } catch (e) { /* 预览失败不影响实验 */ }
+    }
+  } catch (e) {
+    toast('❌ 运行失败：' + e.message, 'error');
+    log('运行失败: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '▶ 运行流程'; }
+    // 如果失败原因是"正在运行中"，确保停止按钮可点击
+    if (e.message && e.message.includes('正在运行')) {
+      setBtnStop(false);
+    }
+  }
+}
