@@ -22,6 +22,8 @@ import subprocess
 import time
 from typing import Optional
 
+logger = logging.getLogger("BehaviorBox")
+
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
 
@@ -263,8 +265,10 @@ async def api_start_mock(data: dict = None, count: int = 10, subject_id: str = "
                     if not _experiment_active:
                         logger.info("实验被手动停止")
                         break
-                    event_count = len(event_store.get_events(s.id))
-                    if event_count >= max_events:
+                    # 只统计 trigger 事件（manual_trigger、node_triggered 等）
+                    all_events = event_store.get_events(s.id)
+                    trigger_count = sum(1 for e in all_events if "trigger" in e.get("event_type", ""))
+                    if trigger_count >= max_events:
                         logger.info(f"达到最大触发次数 {int(max_events)}，停止")
                         break
                     if not unlimited and time.time() >= deadline:
@@ -295,17 +299,18 @@ async def api_start_mock(data: dict = None, count: int = 10, subject_id: str = "
 @app.post("/api/experiment/stop")
 async def api_stop():
     global engine, bus, session, _experiment_active, _active_experiment_id
-    _experiment_active = False
-    _active_experiment_id = ""
-    if engine:
-        await engine.stop()
-    if session:
-        session.stop()
-    if bus:
-        try:
-            await bus.stop_all()
-        except Exception:
-            pass
+    async with _mutex:
+        _experiment_active = False
+        _active_experiment_id = ""
+        if engine:
+            await engine.stop()
+        if session:
+            session.stop()
+        if bus:
+            try:
+                await bus.stop_all()
+            except Exception:
+                pass
     return {"status": "stopped", "session_state": session.state.value if session else "none"}
 
 
@@ -327,6 +332,49 @@ async def api_sessions():
 @app.get("/api/sessions/{session_id}/events")
 async def api_session_events(session_id: str):
     return {"events": event_store.get_events(session_id)}
+
+
+@app.get("/api/sessions/{session_id}/trajectories")
+async def api_session_trajectories(session_id: str, limit: int = 10000):
+    rows = db.execute(
+        "SELECT ts_ms, x, y, zone_name FROM trajectories WHERE session_id=? ORDER BY ts_ms LIMIT ?",
+        (session_id, limit),
+    ).fetchall()
+    return {"session_id": session_id, "count": len(rows),
+            "trajectories": [{"ts_ms": r[0], "x": r[1], "y": r[2], "zone_name": r[3]} for r in rows]}
+
+
+@app.post("/api/sessions/{session_id}/trajectories")
+async def api_append_trajectories(session_id: str, data: dict):
+    points = data.get("points", [])
+    if not points:
+        return {"inserted": 0}
+    experiment_id = data.get("experiment_id", "")
+    rows = [
+        (session_id, experiment_id,
+         int(p.get("ts_ms", 0)),
+         float(p.get("x", 0)),
+         float(p.get("y", 0)),
+         str(p.get("zone_name", "")))
+        for p in points if isinstance(p, dict)
+    ]
+    try:
+        db.executemany(
+            "INSERT INTO trajectories (session_id, experiment_id, ts_ms, x, y, zone_name) VALUES (?,?,?,?,?,?)",
+            rows,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        # FK 约束失败时重试（禁用 FK）
+        db.execute("PRAGMA foreign_keys=OFF")
+        db.executemany(
+            "INSERT INTO trajectories (session_id, experiment_id, ts_ms, x, y, zone_name) VALUES (?,?,?,?,?,?)",
+            rows,
+        )
+        db.commit()
+        db.execute("PRAGMA foreign_keys=ON")
+    return {"inserted": len(rows)}
 
 
 @app.get("/api/sessions/{session_id}/export")
@@ -441,6 +489,7 @@ async def api_run_flow(data: dict):
             raise HTTPException(400, "实验没有关联的流程，请先保存流程")
 
     duration_s = data.get("duration", 30)
+    max_trigger_count = data.get("max_trigger_count", 0)  # 0=不限
     subject_id = data.get("subject_id", "")
     exp_name = data.get("exp_name", "")
     use_camera_source = data.get("use_camera_source", False)
@@ -525,8 +574,19 @@ async def api_run_flow(data: dict):
                 await b.start_all()
                 await e.start(s)
                 start_ts = time.time()
+                _max_triggers = max_trigger_count if max_trigger_count > 0 else float('inf')
                 while time.time() - start_ts < duration_s and e.is_running:
                     await asyncio.sleep(0.1)
+                    if not _experiment_active:
+                        logger.info("流程实验被手动停止")
+                        break
+                    # 检查触发次数（只统计 trigger 事件）
+                    if _max_triggers != float('inf'):
+                        all_events = event_store.get_events(s.id)
+                        trigger_count = sum(1 for e in all_events if "trigger" in e.get("event_type", ""))
+                        if trigger_count >= _max_triggers:
+                            logger.info(f"达到最大触发次数 {int(_max_triggers)}，流程实验停止")
+                            break
                 if e.is_running:
                     await e.stop()
                 await b.stop_all()
@@ -550,8 +610,10 @@ async def api_run_flow(data: dict):
             except Exception as exc:
                 logger.exception(f"流程实验异常: {exc}")
             finally:
-                _experiment_active = False
-                _active_experiment_id = ""
+                # 只在当前实验仍是自己时才重置，避免竞态清掉新实验状态
+                if _active_experiment_id == experiment_id or _active_experiment_id == "":
+                    _experiment_active = False
+                    _active_experiment_id = ""
 
         _experiment_active = True
         _active_experiment_id = experiment_id
@@ -648,14 +710,14 @@ async def api_manual_trigger(data: dict = None):
     if event_store:
         event_store.append_event(
             session_id=session.id,
-            event_type="manual_trigger",
+            event_type="manual",
             ts_ms=ts,
             signal_id=sig.signal_id,
             raw_payload=sig.data,
         )
     await engine.feed_signal(sig)
     await broadcast({
-        "type": "manual_trigger",
+        "type": "manual",
         "session_id": session.id,
         "experiment_id": _active_experiment_id or experiment_id,
         "signal_id": sig.signal_id,
@@ -690,7 +752,7 @@ async def api_camera_event(data: dict):
             source_type=SourceType.CAMERA,
             signal_id=signal_id,
             ts_ms=ts,
-            value=1 if event == "enter" else 0,
+            value=1,  # camera 事件 signal_id 已唯一，匹配即触发
             data={"zone": zone, "event": event, "experiment_id": experiment_id},
         )
         await engine.feed_signal(sig)
@@ -740,7 +802,13 @@ async def api_create_experiment(data: dict):
 
 @app.get("/api/experiments")
 async def api_list_experiments():
-    return {"experiments": list_experiments()}
+    experiments = list_experiments()
+    # 为每个实验添加 has_flow 字段
+    for exp in experiments:
+        exp_id = exp.get("id", "")
+        flow_data = load_flow(exp_id)
+        exp["has_flow"] = flow_data is not None and len(flow_data.get("nodes", {})) > 0
+    return {"experiments": experiments}
 
 
 @app.get("/api/experiments/camera-statuses")
@@ -757,6 +825,9 @@ async def api_get_experiment(exp_id: str):
     folder = exp.get("_folder", "")
     if folder:
         exp["folder_path"] = folder
+    # 检查实验是否有流程
+    flow_data = load_flow(exp_id)
+    exp["has_flow"] = flow_data is not None and len(flow_data.get("nodes", {})) > 0
     # D-30: 预加载摄像头信号源到注册中心
     from protocol.device_registry import load_camera_sources
     camera_config = _load_camera_config(exp_id)

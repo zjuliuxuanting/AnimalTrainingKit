@@ -189,7 +189,8 @@ class TestCameraConfigLoading:
         # role=record 不注册为信号源
         assert "camera:区域A:leave" not in source_ids
 
-    def test_load_from_zone_events(self):
+    def test_zone_events_not_auto_registered(self):
+        """zones[].events 不再自动注册信号源，只从 event_rules 注册"""
         reg = DeviceRegistry("cam_exp2")
         config = {
             "event_rules": [],
@@ -206,12 +207,12 @@ class TestCameraConfigLoading:
         reg.load_from_camera_config(config, "cam_exp2")
         sources = reg.get_all_sources("cam_exp2")
         source_ids = {s.source_id for s in sources}
-        assert "camera:区域B:enter" in source_ids
-        # disabled 的不注册
+        # zones[].events 不再自动注册
+        assert "camera:区域B:enter" not in source_ids
         assert "camera:区域B:leave" not in source_ids
 
-    def test_load_backward_compat(self):
-        """兼容旧格式：zone 无 events 配置时默认生成 enter/leave"""
+    def test_no_fallback_for_zones_without_events(self):
+        """zones 无 events 配置时不兜底注册"""
         reg = DeviceRegistry("cam_exp3")
         config = {
             "event_rules": [],
@@ -220,19 +221,18 @@ class TestCameraConfigLoading:
         reg.load_from_camera_config(config, "cam_exp3")
         sources = reg.get_all_sources("cam_exp3")
         source_ids = {s.source_id for s in sources}
-        assert "camera:旧区域:enter" in source_ids
-        assert "camera:旧区域:leave" in source_ids
+        assert "camera:旧区域:enter" not in source_ids
+        assert "camera:旧区域:leave" not in source_ids
 
-    def test_duplicate_source_id(self):
+    def test_duplicate_source_id_from_event_rules(self):
         """重复 source_id 注册会被更新而非创建新条目"""
         reg = DeviceRegistry("cam_exp4")
         config = {
             "event_rules": [
                 {"zone": "区域C", "event": "enter", "role": "trigger",
                  "name": "第一名称"},
-            ],
-            "zones": [
-                {"name": "区域C", "events": {"enter": {"enabled": True, "role": "trigger"}}},
+                {"zone": "区域C", "event": "enter", "role": "trigger",
+                 "name": "第二名称"},
             ],
         }
         reg.load_from_camera_config(config, "cam_exp4")

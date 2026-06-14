@@ -134,9 +134,11 @@ class DeviceRegistry:
     # --- 持久化（从配置加载）---
 
     def load_from_camera_config(self, config: dict, experiment_id: str = ""):
-        """从 camera.json 配置加载信号源"""
+        """从 camera.json 配置加载信号源
+
+        信号源只从 event_rules 注册，不从 zones[].events 自动注册。
+        """
         eid = experiment_id or self._experiment_id
-        zones = config.get("zones", [])
         event_rules = config.get("event_rules", [])
 
         for rule in event_rules:
@@ -155,28 +157,6 @@ class DeviceRegistry:
                 experiment_id=eid,
                 metadata={"zone": zone, "event": event, "role": "trigger"},
             ))
-
-        for z in zones:
-            name = z.get("name", "区域")
-            zone_events = z.get("events", {})
-            if zone_events and isinstance(zone_events, dict):
-                for event_type, event_config in zone_events.items():
-                    if isinstance(event_config, dict):
-                        enabled = event_config.get("enabled", True)
-                        role = event_config.get("role", "trigger")
-                        if enabled and role == "trigger":
-                            source_id = f"camera:{name}:{event_type}"
-                            if source_id not in self._entries:
-                                self.register(RegistryEntry(
-                                    source_id=source_id,
-                                    display_name=f"摄像头 - {name} - {event_type}",
-                                    category=SourceCategory.SIGNAL,
-                                    source_type="camera_zone",
-                                    produced_signals=[source_id],
-                                    experiment_id=eid,
-                                    metadata={"zone": name, "event": event_type, "role": role},
-                                ))
-            # 无 events 配置 → 不注册任何事件，不兜底（避免误注册 enter+leave）
 
     def register_builtin(self):
         """注册实验人员主路径可用的内置能力。"""

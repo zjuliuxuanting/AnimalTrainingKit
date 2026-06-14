@@ -14,7 +14,7 @@ from typing import Optional, Dict, Any, List, Tuple
 
 logger = logging.getLogger("BehaviorBox.Database")
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA_DDL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -76,6 +76,18 @@ CREATE TABLE IF NOT EXISTS video_frames (
 );
 
 CREATE INDEX IF NOT EXISTS idx_video_frames_session ON video_frames(session_id, ts_ms);
+
+CREATE TABLE IF NOT EXISTS trajectories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    experiment_id TEXT DEFAULT '',
+    ts_ms INTEGER NOT NULL,
+    x REAL NOT NULL,
+    y REAL NOT NULL,
+    zone_name TEXT DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_trajectories_session ON trajectories(session_id, ts_ms);
 """
 
 
@@ -115,6 +127,22 @@ class Database:
                     self._conn.execute("ALTER TABLE sessions ADD COLUMN experiment_id TEXT DEFAULT ''")
                 except sqlite3.OperationalError:
                     pass  # column already exists
+            if current < 3:
+                try:
+                    self._conn.executescript("""
+CREATE TABLE IF NOT EXISTS trajectories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    experiment_id TEXT DEFAULT '',
+    ts_ms INTEGER NOT NULL,
+    x REAL NOT NULL,
+    y REAL NOT NULL,
+    zone_name TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_trajectories_session ON trajectories(session_id, ts_ms);
+""")
+                except sqlite3.OperationalError:
+                    pass
             self._conn.execute(
                 "INSERT OR REPLACE INTO schema_version VALUES (?)",
                 (SCHEMA_VERSION,),
