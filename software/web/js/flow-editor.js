@@ -76,6 +76,12 @@ function showConfigPanel(id) {
     } else if (field.type === 'checkbox') {
       const checked = params[field.key] === true ? 'checked' : '';
       extra += `<label style="display:flex;align-items:center;gap:8px;font-weight:500"><input type="checkbox" id="cfg_${field.key}" ${checked} onchange="updateParam('${id}','${field.key}',this.checked)"> ${field.label}</label>`;
+    } else if (field.type === 'variable_select') {
+      const val = escapeHtml(params[field.key] ?? '');
+      const varNames = collectVariableNames();
+      const datalistId = `datalist_${field.key}`;
+      const options = varNames.map(n => `<option value="${escapeHtml(n)}">`).join('');
+      extra += `<label>${field.label}</label><input type="text" id="cfg_${field.key}" value="${val}" list="${datalistId}" maxlength="${field.maxLength || 64}" onchange="updateParam('${id}','${field.key}',this.value)"><datalist id="${datalistId}">${options}</datalist>`;
     } else if (field.type === 'text') {
       const val = escapeHtml(params[field.key] ?? '');
       extra += `<label>${field.label}</label><input type="text" id="cfg_${field.key}" value="${val}" onchange="updateParam('${id}','${field.key}',this.value)">`;
@@ -87,6 +93,16 @@ function showConfigPanel(id) {
   }
 
   document.getElementById('cfgExtra').innerHTML = extra;
+}
+
+// Collect all variable names used in the flow (from record nodes and existing condition params)
+function collectVariableNames() {
+  const names = new Set();
+  for (const node of Object.values(flowNodes)) {
+    if (node.params?.variable_name) names.add(node.params.variable_name);
+    if (node.params?.compare_variable_name) names.add(node.params.compare_variable_name);
+  }
+  return [...names].sort();
 }
 
 function buildDynamicSelectOptions(fieldKey, selected) {
@@ -191,7 +207,7 @@ function validateNodeParams(id) {
           errors.push(`${field.label} 不能为空`);
           continue;
         }
-      } else if (field.type === 'text' || field.type === 'select') {
+      } else if (field.type === 'text' || field.type === 'select' || field.type === 'variable_select') {
         if (!params[field.key] || params[field.key] === '') {
           errors.push(`${field.label} 不能为空`);
           continue;
@@ -214,7 +230,7 @@ function validateNodeParams(id) {
       }
     }
 
-    if (field.type === 'text' && field.maxLength && params[field.key]) {
+    if ((field.type === 'text' || field.type === 'variable_select') && field.maxLength && params[field.key]) {
       if (params[field.key].length > field.maxLength) {
         errors.push(`${field.label} 不能超过${field.maxLength}个字符`);
       }

@@ -27,6 +27,27 @@ function _headerTextColor(bgColor) {
 }
 
 // ============================================================================
+// Port position helper
+// ============================================================================
+
+function _getPortY(nodeEl, portId, isOutput) {
+  const nodeTop = parseInt(nodeEl.style.top) || 0;
+  const nodeHeight = nodeEl.offsetHeight || 60;
+
+  if (isOutput) {
+    // Find specific port row by data-port (Blockly-style dual-output nodes)
+    const portRow = nodeEl.querySelector(`.node-port-row[data-port="${portId}"]`);
+    if (portRow && portRow.offsetHeight > 0) {
+      return nodeTop + portRow.offsetTop + portRow.offsetHeight / 2;
+    }
+    // Single output port at 50%
+    return nodeTop + nodeHeight / 2;
+  }
+  // Input port at 50%
+  return nodeTop + nodeHeight / 2;
+}
+
+// ============================================================================
 // Node Element Creation — Schema-driven ports
 // ============================================================================
 
@@ -38,6 +59,16 @@ const PORT_LABELS = {
   'false': '假',
   'continue': '继续',
   'stop': '记录终止',
+};
+
+// Port color mapping: port_id → edge color (matches updateSvg)
+const PORT_COLORS = {
+  'true': '#4CAF50',
+  'false': '#F44336',
+  'body': '#7C4DFF',
+  'exit': '#FF9800',
+  'continue': '#2196F3',
+  'stop': '#FF5722',
 };
 
 function createNodeEl(type, label, params) {
@@ -138,7 +169,8 @@ function createNodeEl(type, label, params) {
     pt.addEventListener('mouseleave', () => { if (!connectingFrom) pt.style.background = color + '18'; });
     const dot = pt.querySelector('.port-row-dot');
     if (dot) {
-      dot.style.cssText = `display:inline-block;width:16px;height:16px;background:${color};border:2px solid white;border-radius:50%;flex-shrink:0`;
+      const dotColor = PORT_COLORS[pt.dataset.port] || color;
+      dot.style.cssText = `display:inline-block;width:16px;height:16px;background:${dotColor};border:2px solid white;border-radius:50%;flex-shrink:0`;
     }
   });
 
@@ -617,7 +649,10 @@ function autoLayoutFlow() {
     const source = queue.shift();
     const sourceLayer = layer[source] ?? 0;
     for (const edge of adjacency[source] || []) {
-      if (edge.sourcePort === 'body' && (layer[edge.target] ?? 0) <= sourceLayer) continue;
+      // Skip body edge if target already at same or lower layer (loop convergence)
+      if (edge.sourcePort === 'body' && layer[edge.target] !== undefined && layer[edge.target] <= sourceLayer) continue;
+      // Skip back edges to already-layered loop nodes (prevent loop node from being pushed right)
+      if (flowNodes[edge.target]?.type === 'loop' && layer[edge.target] !== undefined) continue;
       const nextLayer = Math.min(sourceLayer + 1, ids.length + 1);
       if (layer[edge.target] === undefined || nextLayer > layer[edge.target]) {
         layer[edge.target] = nextLayer;
@@ -753,21 +788,15 @@ function updateSvg() {
     if (!srcNode || !tgtNode) continue;
 
     const sx = parseInt(srcNode.el.style.left) + 140;
-    const sy = parseInt(srcNode.el.style.top) + 30;
+    const sy = _getPortY(srcNode.el, edge.sourcePort, true);
     const tx = parseInt(tgtNode.el.style.left);
-    const ty = parseInt(tgtNode.el.style.top) + 30;
+    const ty = _getPortY(tgtNode.el, edge.sourcePort, false);
 
     const midX = (sx + tx) / 2;
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     path.setAttribute('d', `M${sx},${sy} C${midX},${sy} ${midX},${ty} ${tx},${ty}`);
-    let edgeColor = '#90A4AE';
-    let edgeWidth = '2';
-    if (edge.sourcePort === 'true') { edgeColor = '#4CAF50'; edgeWidth = '2.5'; }
-    else if (edge.sourcePort === 'false') { edgeColor = '#F44336'; edgeWidth = '2.5'; }
-    else if (edge.sourcePort === 'body') { edgeColor = '#7C4DFF'; edgeWidth = '2.5'; }
-    else if (edge.sourcePort === 'exit') { edgeColor = '#FF9800'; edgeWidth = '2.5'; }
-    else if (edge.sourcePort === 'continue') { edgeColor = '#2196F3'; edgeWidth = '2.5'; }
-    else if (edge.sourcePort === 'stop') { edgeColor = '#FF5722'; edgeWidth = '2.5'; }
+    const edgeColor = PORT_COLORS[edge.sourcePort] || '#90A4AE';
+    const edgeWidth = PORT_COLORS[edge.sourcePort] ? '2.5' : '2';
     path.setAttribute('stroke', edgeColor);
     path.setAttribute('stroke-width', edgeWidth);
     path.setAttribute('fill', 'none');

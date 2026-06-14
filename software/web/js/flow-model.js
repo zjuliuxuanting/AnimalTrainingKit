@@ -102,7 +102,7 @@ const NODE_SCHEMAS = {
       {
         key: 'variable_name',
         label: '变量名称',
-        type: 'text',
+        type: 'variable_select',
         maxLength: 64,
         required: false,
         condition: (params) => params.source === 'variable',
@@ -147,7 +147,7 @@ const NODE_SCHEMAS = {
       {
         key: 'compare_variable_name',
         label: '比较变量名称',
-        type: 'text',
+        type: 'variable_select',
         maxLength: 64,
         required: false,
         condition: (params) => params.compare_source === 'variable',
