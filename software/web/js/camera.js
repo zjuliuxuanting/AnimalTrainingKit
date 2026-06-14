@@ -1,8 +1,16 @@
 let cameraStream = null;
+// 需求2: 暴露 cameraStream 到 window，供 monitor-camera.js 复用
+Object.defineProperty(window, 'cameraStream', {
+  get() { return cameraStream; },
+  set(v) { cameraStream = v; },
+  configurable: true,
+});
 let cameraStep = 0;
 let bgImageData = null;
 let contrast = 'dark';
 let zones = [];
+let _trajBuffer = [];
+let _trajLastFlush = 0;
 let zoneDrawMode = false;
 let zoneDragStart = null;
 let zoneDragCurrent = null;
@@ -12,6 +20,7 @@ let bgFrames = [];
 let bgFillPoints = [];
 let bgFillMode = false;
 let bgFillCloseBtn = null;
+let availableCameraCount = 0;
 // currentExperimentId declared in flow-editor.js (G3-FIN-1)
 let currentExperimentName = '';
 let cameraExperimentEnabled = false;
@@ -19,12 +28,37 @@ let eventRules = [];
 
 const ZONE_COLORS = ['#FF9800', '#4CAF50', '#2196F3', '#E91E63', '#9C27B0'];
 
+function getSelectedCameraId() {
+  return document.getElementById('camSelect')?.value || '';
+}
+
+function hasUsableCamera() {
+  const sel = document.getElementById('camSelect');
+  if (sel?.value) return true;
+  if (availableCameraCount > 0) return true;
+  return !!Array.from(sel?.options || []).some(opt => opt.dataset.usableCamera === 'true');
+}
+
+function getCameraVideoConstraints(deviceId = getSelectedCameraId()) {
+  if (deviceId) {
+    return { deviceId: { exact: deviceId }, width: { ideal: 640 }, height: { ideal: 480 } };
+  }
+  return true;
+}
+
+function getCameraMediaConstraints(deviceId = getSelectedCameraId()) {
+  if (deviceId) {
+    return { video: getCameraVideoConstraints(deviceId), audio: false };
+  }
+  return { video: true, audio: false };
+}
+
 let rulerPoints = [];
 let rulerPixelsPerCm = null;
 
 let trackPreviewInterval = null;
 let _detectionPaused = false;
-let _smoothPrev = { cx: null, cy: null, minX: null, minY: null, maxX: null, maxY: null };
+let cameraConfigDirty = false;
 
 function toggleAdvancedParams() {
   const panel = document.getElementById('advancedParams');
@@ -175,7 +209,7 @@ function cameraPrevStep() {
 }
 
 function cameraNextStep() {
-  if (cameraStep === 0 && !document.getElementById('camSelect').value) { toast('请先选择一个摄像头', 'warn'); return; }
+  if (cameraStep === 0 && !hasUsableCamera()) { toast('请先选择一个摄像头', 'warn'); return; }
   if (cameraStep === 1 && !bgImageData) { toast('请先完成背景建模', 'warn'); return; }
   if (cameraStep === 2 && !bgImageData) { toast('请先完成背景建模', 'warn'); return; }
   if (cameraStep === 3 && zones.length === 0) { toast('请先绘制至少一个检测区域', 'warn'); return; }
@@ -187,10 +221,11 @@ function cameraNextStep() {
 async function refreshCameraList() {
   const sel = document.getElementById('camSelect');
   sel.innerHTML = '<option value="">检测中...</option>';
+  availableCameraCount = 0;
   try {
     let tempStream = null;
     try {
-      tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      tempStream = await navigator.mediaDevices.getUserMedia(getCameraMediaConstraints(''));
     } catch (permErr) {
     }
     const devices = await navigator.mediaDevices.enumerateDevices();
@@ -198,13 +233,14 @@ async function refreshCameraList() {
       tempStream.getTracks().forEach(t => t.stop());
     }
     const cams = devices.filter(d => d.kind === 'videoinput');
+    availableCameraCount = cams.length;
     if (cams.length === 0) {
       sel.innerHTML = '<option value="">暂未检测到可用摄像头</option>';
       document.getElementById('camSelectStatus').textContent = '💡 暂未检测到可用摄像头';
     } else {
       let html = '';
       cams.forEach((cam, i) => {
-        html += `<option value="${cam.deviceId}">摄像头 ${i + 1}: ${cam.label || '未命名'}</option>`;
+        html += `<option value="${cam.deviceId}" data-usable-camera="true">摄像头 ${i + 1}: ${cam.label || '未命名'}</option>`;
       });
       sel.innerHTML = html;
       document.getElementById('camSelectStatus').textContent = `✅ 检测到 ${cams.length} 个摄像头`;
@@ -251,16 +287,13 @@ function setBgMethod(method) {
 }
 
 function startBgPreview() {
-  const deviceId = document.getElementById('camSelect').value;
-  if (!deviceId) { toast('请先选择摄像头', 'warn'); return; }
+  const deviceId = getSelectedCameraId();
+  if (!hasUsableCamera()) { toast('请先选择摄像头', 'warn'); return; }
   if (cameraStream) {
     cameraStream.getTracks().forEach(t => t.stop());
     cameraStream = null;
   }
-  navigator.mediaDevices.getUserMedia({
-    video: { deviceId: { exact: deviceId }, width: { ideal: 640 }, height: { ideal: 480 } },
-    audio: false,
-  }).then(stream => {
+  navigator.mediaDevices.getUserMedia(getCameraMediaConstraints(deviceId)).then(stream => {
     cameraStream = stream;
     const autoVideo = document.getElementById('camPreviewBg');
     autoVideo.srcObject = stream;
@@ -299,17 +332,14 @@ function releaseBgCamera() {
 }
 
 async function startAutoBackground() {
-  const deviceId = document.getElementById('camSelect').value;
-  if (!deviceId) { toast('请先选择摄像头', 'warn'); return; }
+  const deviceId = getSelectedCameraId();
+  if (!hasUsableCamera()) { toast('请先选择摄像头', 'warn'); return; }
   document.getElementById('btnCaptureBg').disabled = true;
   document.getElementById('camBgProgress').textContent = '正在采集帧... 0/30';
   try {
     if (!cameraStream || !cameraStream.active) {
       if (cameraStream) cameraStream.getTracks().forEach(t => t.stop());
-      cameraStream = await navigator.mediaDevices.getUserMedia({
-        video: { deviceId: { exact: deviceId }, width: { ideal: 640 }, height: { ideal: 480 } },
-        audio: false,
-      });
+      cameraStream = await navigator.mediaDevices.getUserMedia(getCameraMediaConstraints(deviceId));
     }
     const video = document.getElementById('camPreviewBg');
     video.srcObject = cameraStream;
@@ -369,8 +399,8 @@ function startFillBox() {
     return;
   }
 
-  const deviceId = document.getElementById('camSelect').value;
-  if (!deviceId) { toast('请先选择摄像头', 'warn'); return; }
+  const deviceId = getSelectedCameraId();
+  if (!hasUsableCamera()) { toast('请先选择摄像头', 'warn'); return; }
 
   bgFillPoints = [];
   bgFillMode = false;
@@ -397,10 +427,7 @@ function startFillBox() {
   if (cameraStream && cameraStream.active) {
     setupFillVideo(cameraStream);
   } else {
-    navigator.mediaDevices.getUserMedia({
-      video: { deviceId: { exact: deviceId }, width: { ideal: 640 }, height: { ideal: 480 } },
-      audio: false,
-    }).then(stream => {
+    navigator.mediaDevices.getUserMedia(getCameraMediaConstraints(deviceId)).then(stream => {
       cameraStream = stream;
       setupFillVideo(stream);
     }).catch(e => {
@@ -1061,17 +1088,21 @@ async function loadBackgroundImage() {
 }
 
 async function saveCameraConfig() {
+  // 根据 event_rules 同步每个 zone 的 events enabled 状态
+  const ruleSet = new Set((eventRules || []).map(r => `${r.zone}:${r.event}`));
   const config = {
-    zones: zones.map(z => ({
-      name: z.name,
-      points: z.points,
-      events: z.events || {
+    zones: zones.map(z => {
+      const evts = z.events || {
         enter: { enabled: true, role: 'trigger' },
         leave: { enabled: false, role: 'trigger' },
         accumulate: { enabled: false, n: 5, role: 'trigger' },
         dwell: { enabled: false, seconds: 3, role: 'trigger' }
-      }
-    })),
+      };
+      // enter/leave 默认由 zone 创建时控制，accumulate/dwell 由 event_rules 控制
+      if (evts.accumulate) evts.accumulate.enabled = ruleSet.has(`${z.name}:accumulate`);
+      if (evts.dwell) evts.dwell.enabled = ruleSet.has(`${z.name}:dwell`);
+      return { name: z.name, points: z.points, events: evts };
+    }),
     contrast: contrast,
     algorithm: document.getElementById('camAlgo') ? document.getElementById('camAlgo').value : 'bgsub',
     sensitivity: document.getElementById('camSensitivity') ? parseInt(document.getElementById('camSensitivity').value) : 25,
@@ -1118,34 +1149,35 @@ async function loadCameraConfig() {
           dwell: { enabled: false, seconds: 3, role: 'trigger' }
         }
       }));
-      if (cfg.contrast) { contrast = cfg.contrast; setContrast(cfg.contrast); }
-      if (cfg.sensitivity) document.getElementById('camSensitivity').value = cfg.sensitivity;
-      if (cfg.brightness_threshold) document.getElementById('camBrightnessThresh').value = cfg.brightness_threshold;
-      if (cfg.obj_size_min || cfg.min_area) {
-        document.getElementById('camObjSizeMin').value = cfg.obj_size_min || cfg.min_area || 100;
-        document.getElementById('camObjSizeMinVal').textContent = document.getElementById('camObjSizeMin').value;
-      }
-      if (cfg.obj_size_max) {
-        document.getElementById('camObjSizeMax').value = cfg.obj_size_max;
-        document.getElementById('camObjSizeMaxVal').textContent = document.getElementById('camObjSizeMax').value;
-      }
-      if (cfg.track_smooth_enabled !== undefined) {
-        document.getElementById('camTrackSmooth').checked = cfg.track_smooth_enabled;
-        document.getElementById('camTrackSmoothStrength').disabled = !cfg.track_smooth_enabled;
-      }
-      if (cfg.track_smooth_strength) {
-        document.getElementById('camTrackSmoothStrength').value = cfg.track_smooth_strength;
-        document.getElementById('camTrackSmoothStrengthVal').textContent = cfg.track_smooth_strength;
-      }
-      if (cfg.box_smooth_enabled !== undefined) {
-        document.getElementById('camBoxSmooth').checked = cfg.box_smooth_enabled;
-        document.getElementById('camBoxSmoothStrength').disabled = !cfg.box_smooth_enabled;
-      }
-      if (cfg.box_smooth_strength) {
-        document.getElementById('camBoxSmoothStrength').value = cfg.box_smooth_strength;
-        document.getElementById('camBoxSmoothStrengthVal').textContent = cfg.box_smooth_strength;
-      }
       drawZones(); updateZoneList();
+    }
+    if (cfg.algorithm && document.getElementById('camAlgo')) document.getElementById('camAlgo').value = cfg.algorithm;
+    if (cfg.contrast) { contrast = cfg.contrast; setContrast(cfg.contrast); }
+    if (cfg.sensitivity !== undefined) document.getElementById('camSensitivity').value = cfg.sensitivity;
+    if (cfg.brightness_threshold !== undefined) document.getElementById('camBrightnessThresh').value = cfg.brightness_threshold;
+    if (cfg.obj_size_min !== undefined || cfg.min_area !== undefined) {
+      document.getElementById('camObjSizeMin').value = cfg.obj_size_min || cfg.min_area || 100;
+      document.getElementById('camObjSizeMinVal').textContent = document.getElementById('camObjSizeMin').value;
+    }
+    if (cfg.obj_size_max !== undefined) {
+      document.getElementById('camObjSizeMax').value = cfg.obj_size_max;
+      document.getElementById('camObjSizeMaxVal').textContent = document.getElementById('camObjSizeMax').value;
+    }
+    if (cfg.track_smooth_enabled !== undefined) {
+      document.getElementById('camTrackSmooth').checked = cfg.track_smooth_enabled;
+      document.getElementById('camTrackSmoothStrength').disabled = !cfg.track_smooth_enabled;
+    }
+    if (cfg.track_smooth_strength !== undefined) {
+      document.getElementById('camTrackSmoothStrength').value = cfg.track_smooth_strength;
+      document.getElementById('camTrackSmoothStrengthVal').textContent = cfg.track_smooth_strength;
+    }
+    if (cfg.box_smooth_enabled !== undefined) {
+      document.getElementById('camBoxSmooth').checked = cfg.box_smooth_enabled;
+      document.getElementById('camBoxSmoothStrength').disabled = !cfg.box_smooth_enabled;
+    }
+    if (cfg.box_smooth_strength !== undefined) {
+      document.getElementById('camBoxSmoothStrength').value = cfg.box_smooth_strength;
+      document.getElementById('camBoxSmoothStrengthVal').textContent = cfg.box_smooth_strength;
     }
     if (cfg.event_rules && Array.isArray(cfg.event_rules)) {
       eventRules = cfg.event_rules;
@@ -1167,6 +1199,7 @@ async function loadCameraConfig() {
 
 async function saveCameraConfigManual() {
   await saveCameraConfig();
+  cameraConfigDirty = false;
   toast('配置已保存', 'success');
   updateViewConfigButton();
 }
@@ -1192,7 +1225,49 @@ function viewCameraConfig() {
   window.open(url, '_blank');
 }
 
+// 自动启动检测的统一入口：等待设备列表就绪后再判断条件
+async function _tryAutoStartDetection() {
+  if (cameraStep !== 6) return; // 只在第7步才自动启动
+  if (detectInterval) return; // 已在运行
+  if (!bgImageData || zones.length === 0 || !cameraExperimentEnabled) return;
+  // 等待设备枚举完成（通常 <1s，最多等 5s）
+  if (_cameraListReady) {
+    try { await _cameraListReady; } catch (e) { /* ignore */ }
+  }
+  if (!hasUsableCamera()) return; // 没有可用摄像头，放弃自动启动
+  if (detectInterval) return; // 等待期间被手动启动了
+  startCameraDetection();
+}
+
+async function ensureCameraDetectionRunning() {
+  if (detectInterval) return true;
+  if (!cameraExperimentEnabled || !currentExperimentId) return false;
+  if (zones.length === 0) {
+    try {
+      await loadCameraConfig();
+      updateZoneList();
+      renderEventRules();
+    } catch (e) { /* ignore */ }
+  }
+  if (!bgImageData) {
+    try {
+      const data = await loadBackgroundImage();
+      if (data) {
+        bgImageData = data;
+        const cvs = document.getElementById('camCanvas');
+        if (cvs) { cvs.width = data.width; cvs.height = data.height; }
+        drawZones();
+        updateBgConfiguredBadge();
+      }
+    } catch (e) { /* ignore */ }
+  }
+  await _tryAutoStartDetection();
+  return !!detectInterval;
+}
+window.ensureCameraDetectionRunning = ensureCameraDetectionRunning;
+
 function setCameraExperiment(expId, expName, cameraEnabled) {
+  const isSameExp = expId && expId === currentExperimentId;
   currentExperimentId = expId;
   currentExperimentName = expName || '';
   cameraExperimentEnabled = !!cameraEnabled;
@@ -1200,6 +1275,30 @@ function setCameraExperiment(expId, expName, cameraEnabled) {
   // 同步更新流程编辑器的访问状态
   if (typeof updateFlowEditorAccess === 'function') {
     updateFlowEditorAccess();
+  }
+
+  if (isSameExp) {
+    // 同一实验：保留摄像头流和检测状态，但确保背景和config已加载
+    // （切换标签页后 bgImageData 可能为空）
+    const needsBg = !bgImageData;
+    const needsConfig = zones.length === 0;
+    if (needsBg || needsConfig) {
+      Promise.all([
+        needsConfig ? loadCameraConfig().then(() => { updateZoneList(); renderEventRules(); }) : Promise.resolve(),
+        needsBg ? loadBackgroundImage().then(data => {
+          if (data) {
+            bgImageData = data;
+            const cvs = document.getElementById('camCanvas');
+            if (cvs) { cvs.width = data.width; cvs.height = data.height; }
+            drawZones();
+            updateBgConfiguredBadge();
+          }
+        }) : Promise.resolve(),
+      ]).then(() => _tryAutoStartDetection());
+    } else if (!detectInterval && bgImageData && zones.length > 0 && cameraExperimentEnabled) {
+      _tryAutoStartDetection();
+    }
+    return;
   }
 
   // Full reset: clear all in-memory state before loading new experiment's config
@@ -1222,7 +1321,7 @@ function setCameraExperiment(expId, expName, cameraEnabled) {
   rulerPoints = [];
   rulerPixelsPerCm = null;
   eventRules = [];
-  _smoothPrev = { cx: null, cy: null, minX: null, minY: null, maxX: null, maxY: null };
+  resetSmoothing();
 
   // Sync bgMethod UI
   document.getElementById('bgMethodAuto').className = 'btn btn-sm btn-primary';
@@ -1252,19 +1351,19 @@ function setCameraExperiment(expId, expName, cameraEnabled) {
 
   drawZones();
   updateZoneList();
-  loadCameraConfig().then(() => {
-    updateZoneList();
-    renderEventRules();
-  });
-  loadBackgroundImage().then(data => {
-    if (data) {
-      bgImageData = data;
-      const cvs = document.getElementById('camCanvas');
-      if (cvs) { cvs.width = data.width; cvs.height = data.height; }
-      drawZones();
-      updateBgConfiguredBadge();
-    }
-  });
+  // 并行加载 config 和背景，完成后检查是否可自动启动检测
+  Promise.all([
+    loadCameraConfig().then(() => { updateZoneList(); renderEventRules(); }),
+    loadBackgroundImage().then(data => {
+      if (data) {
+        bgImageData = data;
+        const cvs = document.getElementById('camCanvas');
+        if (cvs) { cvs.width = data.width; cvs.height = data.height; }
+        drawZones();
+        updateBgConfiguredBadge();
+      }
+    }),
+  ]).then(() => _tryAutoStartDetection());
   // Initialize pixel area slider ranges with a default 640x480 resolution
   // Actual resolution will override when a camera stream starts
   updateObjSizeRange(640, 480);
@@ -1341,8 +1440,10 @@ function updateCameraTabAccess() {
 
 // Called by app.js tab switch to release camera resources when leaving camera tab
 function releaseCamera() {
+  // 停止检测循环
   if (detectInterval) { clearInterval(detectInterval); detectInterval = null; _detectionPaused = false; }
   if (trackPreviewInterval) { clearInterval(trackPreviewInterval); trackPreviewInterval = null; }
+  // 关闭摄像头流（切走时一律关流）
   if (cameraStream) { cameraStream.getTracks().forEach(t => t.stop()); cameraStream = null; }
   document.getElementById('btnStopDetection').disabled = true;
   document.getElementById('btnStartDetection').disabled = false;
@@ -1392,115 +1493,23 @@ function clearExperimentContext() {
   }
 }
 
-// --- Blob / connected-component extraction ---
-function extractBlob(data, width, height, threshold) {
-  const h = height, w = width;
-  const visited = new Uint8Array(w * h);
-  const blobs = [];
-
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const idx = y * w + x;
-      if (visited[idx]) continue;
-      const i = idx * 4;
-      if (data[i] !== 255 && data[i + 1] !== 255) continue;
-
-      let minX = x, maxX = x, minY = y, maxY = y;
-      let sumX = 0, sumY = 0, count = 0;
-      const stack = [[x, y]];
-      visited[idx] = 1;
-
-      while (stack.length > 0) {
-        const [cx, cy] = stack.pop();
-        sumX += cx; sumY += cy; count++;
-        if (cx < minX) minX = cx; if (cx > maxX) maxX = cx;
-        if (cy < minY) minY = cy; if (cy > maxY) maxY = cy;
-
-        for (const [dx, dy] of [[-1,0],[1,0],[0,-1],[0,1],[ -1,-1],[-1,1],[1,-1],[1,1]]) {
-          const nx = cx + dx, ny = cy + dy;
-          if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
-          const nidx = ny * w + nx;
-          if (visited[nidx]) continue;
-          const ni = nidx * 4;
-          if (data[ni] === 255 || data[ni + 1] === 255) {
-            visited[nidx] = 1;
-            stack.push([nx, ny]);
-          }
-        }
-      }
-
-      if (count >= 5) {
-        blobs.push({
-          cx: sumX / count, cy: sumY / count,
-          minX, maxX, minY, maxY,
-          area: count, width: maxX - minX, height: maxY - minY
-        });
-      }
-    }
-  }
-
-  blobs.sort((a, b) => b.area - a.area);
-  return blobs;
-}
-
-function findBestBlob(blobs, minArea, maxArea, contrastDir) {
-  if (blobs.length === 0) return null;
-  const filtered = blobs.filter(b => b.area >= minArea && b.area <= maxArea);
-  if (filtered.length === 0) return null;
-  const best = filtered[0];
-  return { cx: best.cx, cy: best.cy, minX: best.minX, maxX: best.maxX, minY: best.minY, maxY: best.maxY, count: best.area };
-}
-
 function onSmoothChange() {
   const trackSmooth = document.getElementById('camTrackSmooth').checked;
   const boxSmooth = document.getElementById('camBoxSmooth').checked;
   document.getElementById('camTrackSmoothStrength').disabled = !trackSmooth;
   document.getElementById('camBoxSmoothStrength').disabled = !boxSmooth;
-  if (!trackSmooth) { _smoothPrev.cx = null; _smoothPrev.cy = null; }
-  if (!boxSmooth) { _smoothPrev.minX = null; _smoothPrev.minY = null; _smoothPrev.maxX = null; _smoothPrev.maxY = null; }
-}
-
-function applySmoothing(best, type) {
-  if (!best) return best;
-  const alpha = type === 'track'
-    ? (1 / (parseInt(document.getElementById('camTrackSmoothStrength')?.value || 3) * 0.5 + 1))
-    : (1 / (parseInt(document.getElementById('camBoxSmoothStrength')?.value || 3) * 0.5 + 1));
-  if (type === 'track' && document.getElementById('camTrackSmooth').checked) {
-    if (_smoothPrev.cx !== null) {
-      best.cx = alpha * best.cx + (1 - alpha) * _smoothPrev.cx;
-      best.cy = alpha * best.cy + (1 - alpha) * _smoothPrev.cy;
-    }
-    _smoothPrev.cx = best.cx;
-    _smoothPrev.cy = best.cy;
-  }
-  if (type === 'box' && document.getElementById('camBoxSmooth').checked) {
-    if (_smoothPrev.minX !== null) {
-      const ba = 1 / (parseInt(document.getElementById('camBoxSmoothStrength')?.value || 3) * 0.5 + 1);
-      best.minX = ba * best.minX + (1 - ba) * _smoothPrev.minX;
-      best.minY = ba * best.minY + (1 - ba) * _smoothPrev.minY;
-      best.maxX = ba * best.maxX + (1 - ba) * _smoothPrev.maxX;
-      best.maxY = ba * best.maxY + (1 - ba) * _smoothPrev.maxY;
-    }
-    _smoothPrev.minX = best.minX;
-    _smoothPrev.minY = best.minY;
-    _smoothPrev.maxX = best.maxX;
-    _smoothPrev.maxY = best.maxY;
-  }
-  return best;
+  resetSmoothing();
 }
 
 // --- Tracking parameter preview (Step 6) ---
 function startTrackStepCamera() {
-  const deviceId = document.getElementById('camSelect').value;
-  if (!deviceId) { toast('请先选择摄像头', 'warn'); return; }
+  const deviceId = getSelectedCameraId();
+  if (!hasUsableCamera()) { toast('请先选择摄像头', 'warn'); return; }
   if (cameraStream) {
     cameraStream.getTracks().forEach(t => t.stop());
     cameraStream = null;
   }
-  navigator.mediaDevices.getUserMedia({
-    video: { deviceId: { exact: deviceId }, width: { ideal: 640 }, height: { ideal: 480 } },
-    audio: false,
-  }).then(stream => {
+  navigator.mediaDevices.getUserMedia(getCameraMediaConstraints(deviceId)).then(stream => {
     cameraStream = stream;
     const track = stream.getVideoTracks()[0];
     if (track) {
@@ -1560,8 +1569,8 @@ function updateObjSizeRange(videoWidth, videoHeight) {
 async function startTrackPreview() {
   if (trackPreviewInterval) { clearInterval(trackPreviewInterval); trackPreviewInterval = null; }
   if (!bgImageData) { toast('请先完成背景建模', 'warn'); return; }
-  const deviceId = document.getElementById('camSelect').value;
-  if (!deviceId) { toast('请先选择摄像头', 'warn'); return; }
+  const deviceId = getSelectedCameraId();
+  if (!hasUsableCamera()) { toast('请先选择摄像头', 'warn'); return; }
 
   document.getElementById('btnStartTrackPreview').disabled = true;
   document.getElementById('btnStopTrackPreview').disabled = false;
@@ -1575,10 +1584,7 @@ async function startTrackPreview() {
 
   try {
     if (!cameraStream || !cameraStream.active) {
-      cameraStream = await navigator.mediaDevices.getUserMedia({
-        video: { deviceId: { exact: deviceId }, width: { ideal: 640 }, height: { ideal: 480 } },
-        audio: false,
-      });
+      cameraStream = await navigator.mediaDevices.getUserMedia(getCameraMediaConstraints(deviceId));
     }
     const video = document.createElement('video');
     video.muted = true;
@@ -1606,136 +1612,21 @@ async function startTrackPreview() {
     let detectCount = 0;
 
     trackPreviewInterval = setInterval(() => {
-      // 每帧从 DOM 读取当前参数值，确保滑块调整实时生效
-      const sensitivity = parseInt(document.getElementById('camSensitivity').value);
-      const brightnessThresh = parseInt(document.getElementById('camBrightnessThresh')?.value || 30);
-      const algo = document.getElementById('camAlgo').value;
-      const threshLow = parseInt(document.getElementById('camThreshLow')?.value || 30);
-      const threshHigh = parseInt(document.getElementById('camThreshHigh')?.value || 220);
-      const erosionIters = parseInt(document.getElementById('camContourErosion')?.value || 1);
-      const dilateIters = parseInt(document.getElementById('camContourDilate')?.value || 2);
-      const objSizeMin = parseInt(document.getElementById('camObjSizeMin')?.value || 100);
-      const objSizeMax = parseInt(document.getElementById('camObjSizeMax')?.value || 5000);
-
       offCtx.drawImage(video, 0, 0, offscreen.width, offscreen.height);
       const frame = offCtx.getImageData(0, 0, offscreen.width, offscreen.height);
-      const data = frame.data;
       const w = offscreen.width, h = offscreen.height;
-      const motionMask = new Uint8ClampedArray(w * h * 4);
 
-      for (let i = 0; i < data.length; i += 4) {
-        let isMotion = false;
-        if (algo === 'bgsub') {
-          const diff = Math.abs(data[i] - bgData[i]) + Math.abs(data[i + 1] - bgData[i + 1]) + Math.abs(data[i + 2] - bgData[i + 2]);
-          const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-          const bgLum = 0.299 * bgData[i] + 0.587 * bgData[i + 1] + 0.114 * bgData[i + 2];
-          const lumDiff = Math.abs(lum - bgLum);
-          isMotion = lumDiff > brightnessThresh && diff > sensitivity * 1.5;
-        } else if (algo === 'graythresh') {
-          const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-          const bgLum = 0.299 * bgData[i] + 0.587 * bgData[i + 1] + 0.114 * bgData[i + 2];
-          const lumDiff = contrast === 'dark' ? (bgLum - lum) : (lum - bgLum);
-          isMotion = lumDiff > brightnessThresh && lum > threshLow && lum < threshHigh;
-        } else if (algo === 'silhouette' && prevFrame) {
-          const diff = Math.abs(data[i] - prevFrame.data[i]) + Math.abs(data[i + 1] - prevFrame.data[i + 1]) + Math.abs(data[i + 2] - prevFrame.data[i + 2]);
-          isMotion = diff > sensitivity * 2;
-        }
-        if (isMotion) {
-          motionMask[i] = 255; motionMask[i + 1] = 255; motionMask[i + 2] = 255; motionMask[i + 3] = 255;
-        }
-      }
+      const params = readCamParams();
+      const { morphMask, best } = runDetectionPipeline(frame.data, bgData, w, h, params, prevFrame, contrast);
 
-      // Morphological ops (simulated via neighbor checks)
-      let morphMask = new Uint8ClampedArray(motionMask);
-      for (let iter = 0; iter < erosionIters; iter++) {
-        const eroded = new Uint8ClampedArray(w * h * 4);
-        for (let y = 1; y < h - 1; y++) {
-          for (let x = 1; x < w - 1; x++) {
-            const i = (y * w + x) * 4;
-            if (morphMask[i] !== 255) continue;
-            let allWhite = true;
-            for (let dy = -1; dy <= 1; dy++) {
-              for (let dx = -1; dx <= 1; dx++) {
-                if (morphMask[((y + dy) * w + (x + dx)) * 4] !== 255) { allWhite = false; break; }
-              }
-              if (!allWhite) break;
-            }
-            if (allWhite) { eroded[i] = 255; eroded[i + 1] = 255; eroded[i + 2] = 255; eroded[i + 3] = 255; }
-          }
-        }
-        morphMask = eroded;
-      }
-      for (let iter = 0; iter < dilateIters; iter++) {
-        const dilated = new Uint8ClampedArray(w * h * 4);
-        for (let y = 0; y < h; y++) {
-          for (let x = 0; x < w; x++) {
-            const i = (y * w + x) * 4;
-            if (morphMask[i] === 255) { dilated[i] = 255; dilated[i + 1] = 255; dilated[i + 2] = 255; dilated[i + 3] = 255; continue; }
-            let hasNeighbor = false;
-            for (let dy = -1; dy <= 1; dy++) {
-              for (let dx = -1; dx <= 1; dx++) {
-                const nx = x + dx, ny = y + dy;
-                if (nx >= 0 && nx < w && ny >= 0 && ny < h && morphMask[(ny * w + nx) * 4] === 255) { hasNeighbor = true; break; }
-              }
-              if (hasNeighbor) break;
-            }
-            if (hasNeighbor) { dilated[i] = 255; dilated[i + 1] = 255; dilated[i + 2] = 255; dilated[i + 3] = 255; }
-          }
-        }
-        morphMask = dilated;
-      }
-
-      const blobs = extractBlob(morphMask, w, h, 5);
-      let best = findBestBlob(blobs, Math.max(5, objSizeMin), objSizeMax, contrast);
-      best = applySmoothing(best, 'track');
-      best = applySmoothing(best, 'box');
-
-      // Render: draw frame + motion overlay + detection on offscreen canvas
-      for (let i = 0; i < morphMask.length; i += 4) {
-        if (morphMask[i] === 255) {
-          data[i] = Math.min(255, data[i] + 80);
-          data[i + 1] = Math.max(0, data[i + 1] - 40);
-          data[i + 2] = Math.max(0, data[i + 2] - 40);
-        }
-      }
-      offCtx.putImageData(frame, 0, 0);
-
-      // Draw zones
-      zones.forEach(z => {
-        if (!z.points || z.points.length < 3) return;
-        offCtx.strokeStyle = z.color + '80'; offCtx.lineWidth = 2;
-        offCtx.fillStyle = z.color + '15';
-        offCtx.beginPath();
-        offCtx.moveTo(z.points[0].x, z.points[0].y);
-        for (let j = 1; j < z.points.length; j++) offCtx.lineTo(z.points[j].x, z.points[j].y);
-        offCtx.closePath();
-        offCtx.fill();
-        offCtx.stroke();
-        const p0 = z.points[0];
-        offCtx.fillStyle = z.color;
-        offCtx.fillText(z.name, p0.x + 4, p0.y - 8);
-      });
+      renderDetectionFrame(offCtx, frame, morphMask, best, zones);
 
       if (best) {
         detectCount++;
-        // Bug-2: 把最新检测结果写入全局，供运行监控只读预览复用（不另开摄像头/不另跑检测）
-        window._monitorDetectResult = {
-          best: { cx: best.cx, cy: best.cy, minX: best.minX, maxX: best.maxX, minY: best.minY, maxY: best.maxY, count: best.count },
-          ts: Date.now(),
-        };
-        offCtx.strokeStyle = '#FFD700'; offCtx.lineWidth = 2;
-        offCtx.strokeRect(best.minX, best.minY, best.maxX - best.minX, best.maxY - best.minY);
-        offCtx.fillStyle = '#FFD700';
-        offCtx.beginPath(); offCtx.arc(best.cx, best.cy, 6, 0, Math.PI * 2); offCtx.fill();
-        offCtx.fillStyle = 'white';
-        offCtx.font = 'bold 13px sans-serif';
-        const label = `对象: ${best.count} px²`;
-        offCtx.fillText(label, best.minX, best.minY - 6);
         document.getElementById('camTrackStatus').textContent =
           `✅ 检测到动物 | 位置(${best.cx.toFixed(0)}, ${best.cy.toFixed(0)}) | 面积 ${best.count} px² | 第 ${detectCount} 帧`;
         document.getElementById('camTrackStatus').style.color = '#4CAF50';
       } else {
-        window._monitorDetectResult = { best: null, ts: Date.now() };
         document.getElementById('camTrackStatus').textContent =
           `👀 暂未检测到动物 | 可以调整灵敏度或确保动物在画面中 | 第 ${detectCount} 帧`;
         document.getElementById('camTrackStatus').style.color = '#FF9800';
@@ -1790,15 +1681,11 @@ async function startCameraDetection() {
   document.getElementById('camEventLog').innerHTML = initLog;
   toast('摄像头检测已启动', 'success');
 
-  const deviceId = document.getElementById('camSelect').value;
-  const bgData = bgImageData.data;
+  const deviceId = getSelectedCameraId();
 
   try {
     if (!cameraStream || !cameraStream.active) {
-      cameraStream = await navigator.mediaDevices.getUserMedia({
-        video: { deviceId: { exact: deviceId }, width: { ideal: 640 }, height: { ideal: 480 } },
-        audio: false,
-      });
+      cameraStream = await navigator.mediaDevices.getUserMedia(getCameraMediaConstraints(deviceId));
     }
     const video = document.createElement('video');
     video.muted = true;
@@ -1815,7 +1702,6 @@ async function startCameraDetection() {
       previewCanvas.style.display = 'block';
       previewCanvas.width = canvas.width;
       previewCanvas.height = canvas.height;
-      previewCanvas.getContext('2d').font = '14px sans-serif';
     }
     const aw = analysisCanvas.width, ah = analysisCanvas.height;
     let prevFrame = null;
@@ -1828,109 +1714,15 @@ async function startCameraDetection() {
     let leaveDebounce = {};
 
     detectInterval = setInterval(() => {
-      // 每帧从 DOM 读取当前参数值，确保滑块调整实时生效
-      const sensitivity = parseInt(document.getElementById('camSensitivity').value);
-      const brightnessThresh = parseInt(document.getElementById('camBrightnessThresh')?.value || 30);
-      const algo = document.getElementById('camAlgo').value;
-      const threshLow = parseInt(document.getElementById('camThreshLow')?.value || 30);
-      const threshHigh = parseInt(document.getElementById('camThreshHigh')?.value || 220);
-      const erosionIters = parseInt(document.getElementById('camContourErosion')?.value || 1);
-      const dilateIters = parseInt(document.getElementById('camContourDilate')?.value || 2);
-      const objSizeMin = parseInt(document.getElementById('camObjSizeMin')?.value || 100);
-      const objSizeMax = parseInt(document.getElementById('camObjSizeMax')?.value || 5000);
-
       actx.drawImage(video, 0, 0, aw, ah);
       const frame = actx.getImageData(0, 0, aw, ah);
-      const data = frame.data;
-      const motionMask = new Uint8ClampedArray(aw * ah * 4);
 
-      for (let i = 0; i < data.length; i += 4) {
-        let isMotion = false;
-        if (algo === 'bgsub') {
-          const diff = Math.abs(data[i] - bgData[i]) + Math.abs(data[i + 1] - bgData[i + 1]) + Math.abs(data[i + 2] - bgData[i + 2]);
-          const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-          const bgLum = 0.299 * bgData[i] + 0.587 * bgData[i + 1] + 0.114 * bgData[i + 2];
-          const lumDiff = Math.abs(lum - bgLum);
-          isMotion = lumDiff > brightnessThresh && diff > sensitivity * 1.5;
-        } else if (algo === 'graythresh') {
-          const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-          const bgLum = 0.299 * bgData[i] + 0.587 * bgData[i + 1] + 0.114 * bgData[i + 2];
-          const lumDiff = contrast === 'dark' ? (bgLum - lum) : (lum - bgLum);
-          isMotion = lumDiff > brightnessThresh && lum > threshLow && lum < threshHigh;
-        } else if (algo === 'silhouette' && prevFrame) {
-          const diff = Math.abs(data[i] - prevFrame.data[i]) + Math.abs(data[i + 1] - prevFrame.data[i + 1]) + Math.abs(data[i + 2] - prevFrame.data[i + 2]);
-          isMotion = diff > sensitivity * 2;
-        }
-        if (isMotion) {
-          motionMask[i] = 255; motionMask[i + 1] = 255; motionMask[i + 2] = 255; motionMask[i + 3] = 255;
-          data[i] = 255; data[i + 1] = 0; data[i + 2] = 0; data[i + 3] = 128;
-        }
-      }
+      const params = readCamParams();
+      // 每次使用最新的背景数据，支持运行时更换背景
+      const currentBgData = bgImageData ? bgImageData.data : null;
+      const { morphMask, best } = runDetectionPipeline(frame.data, currentBgData, aw, ah, params, prevFrame, contrast);
 
-      // Morphological ops
-      let morphMask = new Uint8ClampedArray(motionMask);
-      for (let iter = 0; iter < erosionIters; iter++) {
-        const eroded = new Uint8ClampedArray(aw * ah * 4);
-        for (let y = 1; y < ah - 1; y++) {
-          for (let x = 1; x < aw - 1; x++) {
-            const i = (y * aw + x) * 4;
-            if (morphMask[i] !== 255) continue;
-            let allWhite = true;
-            for (let dy = -1; dy <= 1; dy++)
-              for (let dx = -1; dx <= 1; dx++)
-                if (morphMask[((y + dy) * aw + (x + dx)) * 4] !== 255) { allWhite = false; break; }
-            if (allWhite) { eroded[i] = 255; eroded[i + 1] = 255; eroded[i + 2] = 255; eroded[i + 3] = 255; }
-          }
-        }
-        morphMask = eroded;
-      }
-      for (let iter = 0; iter < dilateIters; iter++) {
-        const dilated = new Uint8ClampedArray(aw * ah * 4);
-        for (let y = 0; y < ah; y++) {
-          for (let x = 0; x < aw; x++) {
-            const i = (y * aw + x) * 4;
-            if (morphMask[i] === 255) { dilated[i] = 255; dilated[i + 1] = 255; dilated[i + 2] = 255; dilated[i + 3] = 255; continue; }
-            let hasNeighbor = false;
-            for (let dy = -1; dy <= 1; dy++)
-              for (let dx = -1; dx <= 1; dx++) {
-                const nx = x + dx, ny = y + dy;
-                if (nx >= 0 && nx < aw && ny >= 0 && ny < ah && morphMask[(ny * aw + nx) * 4] === 255) { hasNeighbor = true; break; }
-              }
-            if (hasNeighbor) { dilated[i] = 255; dilated[i + 1] = 255; dilated[i + 2] = 255; dilated[i + 3] = 255; }
-          }
-        }
-        morphMask = dilated;
-      }
-
-      const blobs = extractBlob(morphMask, aw, ah, 5);
-      let best = findBestBlob(blobs, Math.max(5, objSizeMin), objSizeMax, contrast);
-      best = applySmoothing(best, 'track');
-      best = applySmoothing(best, 'box');
-
-      // Render preview
-      const pctx = previewCanvas.getContext('2d');
-      pctx.putImageData(frame, 0, 0);
-
-      if (best && best.count > 10) {
-        pctx.strokeStyle = '#FFD700'; pctx.lineWidth = 2;
-        pctx.strokeRect(best.minX, best.minY, best.maxX - best.minX, best.maxY - best.minY);
-        pctx.fillStyle = '#FFD700';
-        pctx.beginPath(); pctx.arc(best.cx, best.cy, 6, 0, Math.PI * 2); pctx.fill();
-      }
-
-      zones.forEach((z) => {
-        if (!z.points || z.points.length < 3) return;
-        pctx.strokeStyle = z.color; pctx.lineWidth = 2;
-        pctx.fillStyle = z.color + '30';
-        pctx.beginPath();
-        pctx.moveTo(z.points[0].x, z.points[0].y);
-        for (let j = 1; j < z.points.length; j++) pctx.lineTo(z.points[j].x, z.points[j].y);
-        pctx.closePath();
-        pctx.fill(); pctx.stroke();
-        const p0 = z.points[0];
-        pctx.fillStyle = z.color;
-        pctx.fillText(z.name, p0.x + 6, p0.y - 18);
-      });
+      renderDetectionFrame(previewCanvas.getContext('2d'), frame, morphMask, best, zones);
 
       // Zone events: center-point based judgment
       zones.forEach(z => {
@@ -1963,8 +1755,8 @@ async function startCameraDetection() {
             body: JSON.stringify({ zone: z.name, event: 'enter', ts: Date.now(), experiment_id: currentExperimentId, pos_x: best ? best.cx : null, pos_y: best ? best.cy : null }),
           }).catch(() => {});
         } else if (enterDebounce[z.id] >= DEBOUNCE_FRAMES && had) {
-          if (dwellTimers[z.id] && !dwellFired[z.id] && (Date.now() - dwellTimers[z.id]) > ((z.events?.dwell?.seconds || 3) * 1000)) {
-            const dwellSec = z.events?.dwell?.seconds || 3;
+          if (z.events?.dwell?.enabled && dwellTimers[z.id] && !dwellFired[z.id] && (Date.now() - dwellTimers[z.id]) > ((z.events.dwell.seconds || 3) * 1000)) {
+            const dwellSec = z.events.dwell.seconds || 3;
             const posInfo = best ? `位置(${best.cx.toFixed(0)},${best.cy.toFixed(0)})` : '';
             logCam(`⏱ [停留] ${z.name} | 触发: 停留超过${dwellSec}秒${posInfo ? ' ' + posInfo : ''} | 来源: 摄像头检测`, 'info');
             const dwellRule = findEventRuleName(z.name, 'dwell');
@@ -1975,17 +1767,19 @@ async function startCameraDetection() {
               body: JSON.stringify({ zone: z.name, event: 'dwell', seconds: dwellSec, ts: Date.now(), experiment_id: currentExperimentId, pos_x: best ? best.cx : null, pos_y: best ? best.cy : null }),
             }).catch(() => {});
           }
-          const accN = z.events?.accumulate?.n || 5;
-          if (accumulateCounts[z.id] >= accN && accumulateCounts[z.id] > (accumulateLastFired[z.id] || 0)
-              && accumulateCounts[z.id] % accN === 0) {
-            logCam(`🔢 [累计] ${z.name} | 触发: 累计进入达到${accumulateCounts[z.id]}次(每${accN}次) | 来源: 摄像头检测`, 'info');
-            const accRule = findEventRuleName(z.name, 'accumulate');
-            if (accRule) logCam(`📌 [触发规则] 已触发「${accRule}」`, '');
-            accumulateLastFired[z.id] = accumulateCounts[z.id];
-            fetch('/api/experiment/camera-event', {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ zone: z.name, event: 'accumulate', n: accN, count: accumulateCounts[z.id], ts: Date.now(), experiment_id: currentExperimentId }),
-            }).catch(() => {});
+          if (z.events?.accumulate?.enabled) {
+            const accN = z.events.accumulate.n || 5;
+            if (accumulateCounts[z.id] >= accN && accumulateCounts[z.id] > (accumulateLastFired[z.id] || 0)
+                && accumulateCounts[z.id] % accN === 0) {
+              logCam(`🔢 [累计] ${z.name} | 触发: 累计进入达到${accumulateCounts[z.id]}次(每${accN}次) | 来源: 摄像头检测`, 'info');
+              const accRule = findEventRuleName(z.name, 'accumulate');
+              if (accRule) logCam(`📌 [触发规则] 已触发「${accRule}」`, '');
+              accumulateLastFired[z.id] = accumulateCounts[z.id];
+              fetch('/api/experiment/camera-event', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ zone: z.name, event: 'accumulate', n: accN, count: accumulateCounts[z.id], ts: Date.now(), experiment_id: currentExperimentId }),
+              }).catch(() => {});
+            }
           }
         } else if (leaveDebounce[z.id] >= DEBOUNCE_FRAMES && had) {
           inZone[z.id] = false;
@@ -2001,6 +1795,30 @@ async function startCameraDetection() {
           }).catch(() => {});
         }
       });
+
+      // 需求3: 轨迹采样 — 每帧（150ms）记录位置到缓冲区，每5秒批量上传
+      if (best && best.count > 10 && typeof currentSessionId !== 'undefined' && currentSessionId) {
+        const currentZone = zones.find(z => z.points && z.points.length >= 3 && pointInPolygon(best.cx, best.cy, z.points));
+        _trajBuffer.push({ ts_ms: Date.now(), x: Math.round(best.cx), y: Math.round(best.cy), zone_name: currentZone ? currentZone.name : '' });
+        const now = Date.now();
+        if (now - _trajLastFlush >= 5000 && _trajBuffer.length > 0) {
+          const batch = _trajBuffer.splice(0, _trajBuffer.length);
+          _trajLastFlush = now;
+          fetch(`/api/sessions/${currentSessionId}/trajectories`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ points: batch, experiment_id: typeof currentExperimentId !== 'undefined' ? currentExperimentId : '' }),
+          }).catch(() => {});
+        }
+      }
+
+      // 全局 offscreen canvas：运行监控直接读取此帧（含遮罩+轮廓+zones）
+      if (!window._detectFrame) { window._detectFrame = document.createElement('canvas'); }
+      if (window._detectFrame.width !== previewCanvas.width || window._detectFrame.height !== previewCanvas.height) {
+        window._detectFrame.width = previewCanvas.width;
+        window._detectFrame.height = previewCanvas.height;
+      }
+      window._detectFrame.getContext('2d').drawImage(previewCanvas, 0, 0);
+      window._detectFrameTs = Date.now();
 
       prevFrame = frame;
     }, 200);
@@ -2022,7 +1840,7 @@ async function startCameraDetection() {
 function stopCameraDetection() {
   _detectionPaused = false;
   if (detectInterval) { clearInterval(detectInterval); detectInterval = null; }
-  if (cameraStream) { cameraStream.getTracks().forEach(t => t.stop()); cameraStream = null; }
+  // 需求2: 不停 cameraStream，让运行监控复用；设备切换时才释放
   document.getElementById('btnStartDetection').disabled = false;
   document.getElementById('btnStopDetection').disabled = true;
   document.getElementById('cameraDetectStatus').textContent = '⏹ 检测已停止';
@@ -2058,8 +1876,20 @@ if (rulerCanvas) {
   });
 }
 
-refreshCameraList();
+// 设备枚举延迟到用户首次点击摄像头 tab 时触发，避免页面加载时弹权限对话框
+let _cameraListReady = null;
+window._triggerCameraInit = function () {
+  if (!_cameraListReady) _cameraListReady = refreshCameraList();
+};
 updateCameraTabAccess();
+
+// 摄像头配置脏标记：任意滑块/输入变化时设置，保存时清除
+const _camTab = document.getElementById('tab-camera');
+if (_camTab) {
+  _camTab.addEventListener('input', () => { cameraConfigDirty = true; });
+  _camTab.addEventListener('change', () => { cameraConfigDirty = true; });
+}
+window.isCameraConfigDirty = function () { return cameraConfigDirty; };
 
 function findNearestVertex(canvasX, canvasY, threshold) {
   threshold = threshold || 12;
