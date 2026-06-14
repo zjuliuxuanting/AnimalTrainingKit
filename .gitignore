@@ -65,6 +65,10 @@ e2e/playwright-report/
 /software/test_pw_*.png
 /software/test_pw_*.html
 
+# Ad-hoc debugging artifacts (MCP console logs / scratch TS harness)
+/.playwright-mcp/
+/test-harness/
+
 # Local-only management assets
 /.agents/
 /.mcp.json
