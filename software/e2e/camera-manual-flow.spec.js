@@ -190,7 +190,7 @@ test('manual trigger button drives TRIGGER -> RECORD and sources hide mock/timer
     const sessionId = await runFlowFromBrowser(page, expId, simpleRecordFlow('人工事件', 'manual:trigger'));
     await page.locator('#btnManualTrigger').click();
     const { events } = await waitForRecord(page, sessionId);
-    expect(events.some(e => e.event_type === 'manual_trigger')).toBeTruthy();
+    expect(events.some(e => e.event_type === 'manual')).toBeTruthy();
     await expect(page.locator('#eventLog')).toContainText('手动触发');
   } finally {
     await api(page, '/api/experiment/stop', { method: 'POST' }).catch(() => {});

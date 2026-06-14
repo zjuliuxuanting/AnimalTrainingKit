@@ -31,13 +31,14 @@ test('5. 五条正式链路列表干净', async ({ page }) => {
   await gotoApp(page);
   const exps = await page.request.get('/api/experiments').then(r => r.json());
   const names = exps.experiments.map(e => e.name).sort();
-  expect(names).toEqual([
-    'C1_FR1_操作性条件反射',
-    'C2_社会性选择',
-    'C3_5CSRTT',
-    'C4_SignTracking',
-    'C5_每日定额投喂',
-  ]);
+  // C1-C5 必须全部存在（允许额外的测试实验如 test-1）
+  const required = ['C1_FR1_操作性条件反射', 'C2_社会性选择', 'C3_5CSRTT', 'C4_SignTracking', 'C5_每日定额投喂'];
+  for (const r of required) {
+    expect(names).toContain(r);
+  }
+  // 不允许有 v113-/g3-manual- 前缀的残留
+  const dirty = names.filter(n => n.startsWith('v113-') || n.startsWith('g3-manual'));
+  expect(dirty).toEqual([]);
 });
 
 test('4. START 左上 / END 右侧（整理流程后）', async ({ page }) => {

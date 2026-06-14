@@ -112,3 +112,30 @@ def test_realtime_log_shows_record_variable_change_and_user_friendly_action():
     assert "当前=" in app_source
     assert "执行动作: " in app_source
     assert "actuator_label" in app_source
+
+
+def test_camera_detection_falls_back_to_default_camera_when_device_id_is_empty():
+    source = _read_web_js("camera.js")
+    auto_start_body = source.split("async function _tryAutoStartDetection()", 1)[1].split("function setCameraExperiment", 1)[0]
+
+    assert "function getCameraVideoConstraints" in source
+    assert "function hasUsableCamera" in source
+    assert "video: true" in source
+    assert "deviceId: { exact: deviceId }" in source
+    assert "if (!deviceId) return" not in auto_start_body
+    assert "hasUsableCamera()" in auto_start_body
+
+
+def test_camera_config_loads_detection_parameters_independent_of_zones():
+    source = _read_web_js("camera.js")
+    load_body = source.split("async function loadCameraConfig()", 1)[1].split("async function saveCameraConfigManual()", 1)[0]
+    zone_branch = load_body.split("if (cfg.zones && cfg.zones.length > 0)", 1)[1].split("if (cfg.algorithm", 1)[0]
+
+    assert "cfg.algorithm" in load_body
+    assert "camAlgo" in load_body
+    assert "cfg.sensitivity !== undefined" in load_body
+    assert "cfg.brightness_threshold !== undefined" in load_body
+    assert "cfg.obj_size_min !== undefined" in load_body
+    assert "cfg.obj_size_max !== undefined" in load_body
+    assert "camAlgo" not in zone_branch
+    assert "camSensitivity" not in zone_branch
